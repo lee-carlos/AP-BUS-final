@@ -1,0 +1,6 @@
+{
+  "name": "AP-BUS - Campus Shuttle Booking & Smart Boarding",
+  "description": "Smart shuttle bus booking, real-time GPS proximity check-in, live route tracking, and automated standby boarding for Asia Pacific University (APU).",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
