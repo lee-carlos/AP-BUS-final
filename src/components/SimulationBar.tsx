@@ -88,11 +88,13 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
 
         <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-0.5">
           {[
-            { label: '07:45 (Start)', value: '07:45', desc: 'Sarah Chk-In, Ryan Hold' },
-            { label: '07:50 (T-10 Expiry)', value: '07:50', desc: 'Ryan Expired, Seat Freed' },
-            { label: '07:57 (T-3 Cutoff)', value: '07:57', desc: 'FCFS Claim Closes' },
-            { label: '08:00 (Boarding Close)', value: '08:00', desc: 'Departure & No-Show' },
-            { label: '06:00 (Day Open)', value: '06:00', desc: 'Daily Window Opens' },
+            { label: '07:45 (On the Way)', value: '07:45', desc: 'Counting down · 15m' },
+            { label: '08:00 (Arrived)', value: '08:00', desc: 'Countdown 0 · 2m window' },
+            { label: '08:01 (Waiting)', value: '08:01', desc: 'Scan depart vs check-in' },
+            { label: '08:02 (Depart)', value: '08:02', desc: 'Departs · 2 score penalty' },
+            { label: '08:03 (Expired)', value: '08:03', desc: 'Bus section completed' },
+            { label: '07:20 (Not Available)', value: '07:20', desc: 'Before 30m window' },
+            { label: '07:50 (T-10 Cutoff)', value: '07:50', desc: 'Check-in cutoff' },
           ].map((milestone) => (
             <button
               key={milestone.value}

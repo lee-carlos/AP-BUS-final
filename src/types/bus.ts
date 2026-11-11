@@ -25,6 +25,14 @@ export type TripStatus =
   | 'CANCELLED'   // Service cancelled
   | 'COMPLETED';  // Trip completed
 
+export type BusLifecycleStatus =
+  | 'Not Available Now'
+  | 'On the Way'
+  | 'Arrived'
+  | 'Waiting'
+  | 'Depart'
+  | 'Expired';
+
 export interface BusTrip {
   id: string;
   routeId: string;

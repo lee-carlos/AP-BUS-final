@@ -1,4 +1,4 @@
-import { Booking, BookingStatus, BusTrip, CheckInAssessmentStatus, DemoUser, LocationCoord } from '../types/bus';
+import { Booking, BookingStatus, BusLifecycleStatus, BusTrip, CheckInAssessmentStatus, DemoUser, LocationCoord } from '../types/bus';
 import { isWithinBusStopRange, getStopRadius } from './geo';
 
 /**
@@ -325,12 +325,66 @@ export function evaluateNoShowPenalty(bookingOrTripWaiver?: Booking | boolean, m
     return { points: 0, majorPoints: 0, reason: 'Penalty waived due to trip delay or cancellation.', message: 'Penalty waived due to trip delay or cancellation.' };
   }
   return {
-    points: PENALTY_SYSTEM.POINTS_MAJOR,
-    majorPoints: PENALTY_SYSTEM.POINTS_MAJOR,
+    points: PENALTY_SYSTEM.POINTS_MAJOR, // 2 score penalty
+    majorPoints: 1, // 1 Major penalty
     type: 'MAJOR',
-    reason: 'Checked in but failed to board before driver closed boarding (No-Show).',
-    message: 'Checked in but failed to board before driver closed boarding (No-Show).',
+    reason: 'Checked in but did not scan for depart before bus departed (2 score penalty).',
+    message: 'Checked in but did not scan for depart before bus departed (2 score penalty).',
   };
+}
+
+/**
+ * Computes the bus status with label "bus status".
+ * User Specification:
+ * - "Not Available Now": when it hasn't reach the time (e.g. >30 minutes before departure or cancelled)
+ * - "On the Way": when it counts down the time (T-30m down to T-1m)
+ * - "Arrived": when it reaches 0 countdown (0m)
+ * - "Waiting": 2 minutes for waiting and depart (minute -1)
+ * - "Depart": when waiting period completes and bus departs (minute -2)
+ * - "Expired": when the bus section is done (minute -3 and beyond)
+ */
+export function getBusLifecycleStatus(
+  currentTimeStr: string,
+  departureTimeStr: string,
+  options?: {
+    isCancelled?: boolean;
+    isCompleted?: boolean;
+  }
+): BusLifecycleStatus {
+  if (options?.isCancelled) {
+    return 'Not Available Now';
+  }
+
+  const minsUntil = getMinutesUntilDeparture(currentTimeStr, departureTimeStr);
+
+  // When it hasn't reached the countdown period (> 30 mins)
+  if (minsUntil > 30) {
+    return 'Not Available Now';
+  }
+
+  // When counting down the time
+  if (minsUntil > 0) {
+    return 'On the Way';
+  }
+
+  // At 0 countdown
+  if (minsUntil === 0) {
+    return 'Arrived';
+  }
+
+  // 2 minutes for waiting and depart:
+  // Minute 1: Waiting
+  if (minsUntil === -1) {
+    return 'Waiting';
+  }
+
+  // Minute 2: Depart (bus departs)
+  if (minsUntil === -2) {
+    return 'Depart';
+  }
+
+  // When the bus section is done
+  return 'Expired';
 }
 
 /**

@@ -305,10 +305,33 @@ export default function App() {
           });
         }
 
-        // 2. Bus Departure & No-Show Auto-Tick:
-        // When currentTime reaches or passes departureTime, if bus has not departed yet, mark DEPARTED.
-        // If passenger only checked in and did NOT scan QR to board, issue 2 score penalty (1 Major).
-        if (minsUntil <= 0 && trip.tripStatus !== 'DEPARTED' && trip.tripStatus !== 'COMPLETED' && trip.tripStatus !== 'CANCELLED') {
+        // 2. Bus Arrival, Waiting (2m) & Departure / 2 Score Penalty:
+        // When countdown reaches 0: Bus has Arrived at stop
+        if (minsUntil === 0 && trip.tripStatus !== 'ARRIVED' && trip.tripStatus !== 'DEPARTED' && trip.tripStatus !== 'CANCELLED') {
+          setTrips((prevTrips) =>
+            prevTrips.map((t) =>
+              t.id === trip.id ? { ...t, tripStatus: 'ARRIVED' as const, boardingOpen: true } : t
+            )
+          );
+          showNotice(
+            'Bus Arrived 🚌',
+            `${trip.routeName} has arrived! 2-minute departure window open. Scan for depart to board now.`,
+            'info'
+          );
+        }
+
+        // When minsUntil === -1: Bus is Waiting at bay (minute 1 of 2m waiting)
+        if (minsUntil === -1 && trip.tripStatus !== 'WAITING' && trip.tripStatus !== 'DEPARTED' && trip.tripStatus !== 'CANCELLED') {
+          setTrips((prevTrips) =>
+            prevTrips.map((t) =>
+              t.id === trip.id ? { ...t, tripStatus: 'WAITING' as const, boardingOpen: true } : t
+            )
+          );
+        }
+
+        // When minsUntil <= -2: 2 minutes for waiting have elapsed -> Bus DEPARTS!
+        // Any student who just checked in but did not scan for depart receives the 2 score penalty!
+        if (minsUntil <= -2 && trip.tripStatus !== 'DEPARTED' && trip.tripStatus !== 'COMPLETED' && trip.tripStatus !== 'CANCELLED') {
           // Update trip status to DEPARTED
           setTrips((prevTrips) =>
             prevTrips.map((t) =>
@@ -316,7 +339,7 @@ export default function App() {
             )
           );
 
-          // Check for checked-in passengers who did not scan QR
+          // Check for checked-in passengers who did not scan for depart
           Object.entries(userBookings).forEach(([userId, bList]) => {
             bList.forEach((b) => {
               if (b.tripId === trip.id && b.status === 'CHECKED_IN') {
@@ -335,7 +358,7 @@ export default function App() {
                     prevUsers.map((u) => {
                       if (u.id === userId) {
                         const newMajors = u.majorPenalties + penaltyEval.majorPoints;
-                        const newTotal = u.penaltyPoints + penaltyEval.points; // +2 score
+                        const newTotal = u.penaltyPoints + penaltyEval.points; // +2 score penalty
                         return {
                           ...u,
                           majorPenalties: newMajors,
@@ -350,8 +373,8 @@ export default function App() {
 
                   const targetUser = users.find((u) => u.id === userId);
                   showNotice(
-                    'Bus Departed - 2 Score Penalty',
-                    `${targetUser?.name || 'Passenger'} checked in but did not scan QR to board before departure (${trip.departureTime}). 2 penalty points issued.`,
+                    'Bus Departed · 2 Score Penalty',
+                    `${targetUser?.name || 'Passenger'} checked in but did not scan for depart before bus departed. 2 score penalty applied!`,
                     'alert'
                   );
                 }
@@ -461,17 +484,44 @@ export default function App() {
     }
   };
 
+  // Acknowledge student scan for depart (transitions CHECKED_IN to BOARDED, avoiding 2 score penalty)
+  const handleScanForDepart = (bookingId: string) => {
+    let studentName = '';
+
+    setUserBookings((prev) => {
+      const next: Record<string, Booking[]> = {};
+      Object.keys(prev).forEach((uid) => {
+        next[uid] = (prev[uid] || []).map((b) => {
+          if (b.id === bookingId) {
+            const u = users.find((usr) => usr.id === uid);
+            if (u) studentName = u.name;
+            return {
+              ...b,
+              status: 'BOARDED' as const,
+              boardedAt: simulatedTimeStr,
+            };
+          }
+          return b;
+        });
+      });
+      return next;
+    });
+
+    setSelectedBookingForPass((prev) =>
+      prev && prev.id === bookingId ? { ...prev, status: 'BOARDED' as const, boardedAt: simulatedTimeStr } : prev
+    );
+
+    showNotice(
+      'Depart Scan Acknowledged',
+      `${studentName || 'Student'} scanned for depart and boarded bus safely. 0 penalty applied.`,
+      'success'
+    );
+  };
+
   // Self Boarding Pass action
   const handleBoardBus = () => {
     if (!currentUser || !selectedBookingForPass) return;
-    setUserBookings((prev) => ({
-      ...prev,
-      [currentUser.id]: (prev[currentUser.id] || []).map((b) =>
-        b.id === selectedBookingForPass.id ? { ...b, status: 'BOARDED' as const } : b
-      ),
-    }));
-    setSelectedBookingForPass((prev) => (prev ? { ...prev, status: 'BOARDED' } : null));
-    showNotice('Boarded Successfully', 'Welcome aboard the APU Shuttle!', 'success');
+    handleScanForDepart(selectedBookingForPass.id);
   };
 
   // Standard Seat Booking
@@ -1089,6 +1139,7 @@ export default function App() {
               setIsBoardingPassOpen(true);
             }}
             onRequestCancel={(b) => setCancelingBooking(b)}
+            onScanForDepart={handleScanForDepart}
           />
 
           {/* Primary Action Button: Open Shuttle Schedule & Booking */}

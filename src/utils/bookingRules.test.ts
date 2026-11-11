@@ -16,6 +16,7 @@ import {
   PENALTY_SYSTEM,
   formatTime12h,
   isTripPastSchedule,
+  getBusLifecycleStatus,
 } from './bookingRules';
 import { calculateDistanceMeters, isWithinBusStopRange, getStopRadius } from './geo';
 import { Booking, BusTrip } from '../types/bus';
@@ -340,4 +341,42 @@ test('everyone is not allowed to have 2 active booked seats from same depart poi
     candidateToStopName: 'LRT Bukit Jalil',
   });
   assert.equal(resReturn.canBook, true);
+});
+
+test('getBusLifecycleStatus correctly transitions through all 6 required states', () => {
+  // Bus departure scheduled at 08:00
+  const depTime = '08:00';
+
+  // 1. Not Available Now (when it hasn't reach the time, > 30 minutes away)
+  assert.equal(getBusLifecycleStatus('07:20', depTime), 'Not Available Now');
+  assert.equal(getBusLifecycleStatus('07:29', depTime), 'Not Available Now');
+
+  // 2. On the Way (when counting down the time, T-30 down to T-1)
+  assert.equal(getBusLifecycleStatus('07:30', depTime), 'On the Way');
+  assert.equal(getBusLifecycleStatus('07:45', depTime), 'On the Way');
+  assert.equal(getBusLifecycleStatus('07:59', depTime), 'On the Way');
+
+  // 3. Arrived (when 0 countdown)
+  assert.equal(getBusLifecycleStatus('08:00', depTime), 'Arrived');
+
+  // 4. Waiting (during 2 minutes for waiting and depart: minute 1)
+  assert.equal(getBusLifecycleStatus('08:01', depTime), 'Waiting');
+
+  // 5. Depart (minute 2: waiting ends and bus departs)
+  assert.equal(getBusLifecycleStatus('08:02', depTime), 'Depart');
+
+  // 6. Expired (when the bus section is done)
+  assert.equal(getBusLifecycleStatus('08:03', depTime), 'Expired');
+  assert.equal(getBusLifecycleStatus('08:15', depTime), 'Expired');
+});
+
+test('evaluateNoShowPenalty applies exactly 2 score of penalties when checked in without depart scan', () => {
+  const penalty = evaluateNoShowPenalty();
+  assert.equal(penalty.points, 2);
+  assert.equal(penalty.type, 'MAJOR');
+  assert.equal(penalty.reason.includes('2 score penalty'), true);
+
+  // When waived due to delay
+  const waivedPenalty = evaluateNoShowPenalty(true);
+  assert.equal(waivedPenalty.points, 0);
 });

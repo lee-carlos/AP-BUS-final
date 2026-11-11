@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { BusTrip, Booking } from '../types/bus';
-import { formatTime12h, isBusFull, getMinutesUntilDeparture } from '../utils/bookingRules';
+import { formatTime12h, isBusFull, getMinutesUntilDeparture, getBusLifecycleStatus } from '../utils/bookingRules';
 import { APU_STOPS } from '../data/apuRoutes';
 import {
   X,
@@ -258,6 +258,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
               // Gray limit UI condition:
               // When user has 2 active bookings, all other unbooked trips turn gray as sign that booking is on limit!
               const isTurnedGrayByLimit = isLimitReached && !bookedByCurrentUser;
+              const tripBusStatus = getBusLifecycleStatus(currentTimeStr, trip.departureTime);
 
               return (
                 <div
@@ -277,16 +278,15 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
                   <div className="flex items-start justify-between gap-2">
                     {/* Left: Time and Route */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 font-mono">
+                      <div className="flex items-center gap-1.5 font-mono flex-wrap">
                         <Clock className={`w-3 h-3 ${isTimePassed || isTurnedGrayByLimit ? 'text-zinc-400' : 'text-emerald-600 dark:text-emerald-400'}`} />
                         <span className={`text-xs font-extrabold ${isTimePassed ? 'text-zinc-500 line-through' : isTurnedGrayByLimit ? 'text-zinc-500' : 'text-zinc-900 dark:text-white'}`}>
                           {formatTime12h(trip.departureTime)}
                         </span>
-                        {isTimePassed ? (
-                          <span className="text-[9px] bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-1 py-0.2 rounded-xs font-mono uppercase">
-                            Departed (Below)
-                          </span>
-                        ) : isTurnedGrayByLimit ? (
+                        <span className="text-[9px] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-1 py-0.2 rounded-xs font-mono text-zinc-600 dark:text-zinc-300">
+                          bus status: {tripBusStatus}
+                        </span>
+                        {isTurnedGrayByLimit ? (
                           <span className="text-[9px] bg-zinc-200 dark:bg-zinc-800 text-zinc-500 px-1 py-0.2 rounded-xs font-mono uppercase">
                             Limit Reached (2/2)
                           </span>

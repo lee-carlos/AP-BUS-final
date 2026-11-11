@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Booking } from '../types/bus';
-import { formatTime12h, getMinutesUntilDeparture, PENALTY_SYSTEM } from '../utils/bookingRules';
+import { formatTime12h, getMinutesUntilDeparture, getBusLifecycleStatus, PENALTY_SYSTEM } from '../utils/bookingRules';
 import {
   Bus,
   Bell,
@@ -27,6 +27,7 @@ interface BookedBusCardProps {
   onCheckInNow: (bookingId: string) => void;
   onOpenBoardingPass: (booking: Booking) => void;
   onRequestCancel: (booking: Booking) => void;
+  onScanForDepart?: (bookingId: string) => void;
 }
 
 export const BookedBusCard: React.FC<BookedBusCardProps> = ({
@@ -39,6 +40,7 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
   onCheckInNow,
   onOpenBoardingPass,
   onRequestCancel,
+  onScanForDepart,
 }) => {
   const [activeTab, setActiveTab] = useState<number>(0);
   const isSuspended = penaltyPoints >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD;
@@ -70,6 +72,7 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
   const currentIdx = activeTab >= bookings.length ? 0 : activeTab;
   const booking = bookings[currentIdx];
   const minutesUntilDeparture = getMinutesUntilDeparture(currentTimeStr, booking.departureTime);
+  const busStatus = getBusLifecycleStatus(currentTimeStr, booking.departureTime);
 
   const isCheckedIn = booking.status === 'CHECKED_IN';
   const isBoarded = booking.status === 'BOARDED';
@@ -81,6 +84,9 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
   // Check-in assessment: window opens T-30, closes T-10
   const isWithinCheckInWindow = minutesUntilDeparture <= 30 && minutesUntilDeparture >= 10;
   const isBeforeCheckInWindow = minutesUntilDeparture > 30;
+
+  // Waiting & Depart 2-minute window active
+  const isWaitingOrDepartWindow = busStatus === 'Arrived' || busStatus === 'Waiting' || busStatus === 'Depart';
 
   return (
     <div className="px-3.5 py-2.5">
@@ -175,13 +181,83 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
               <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 font-mono">
                 {minutesUntilDeparture > 10
                   ? `${minutesUntilDeparture - 10}m to cutoff`
-                  : minutesUntilDeparture >= 0
+                  : minutesUntilDeparture > 0
                   ? `${minutesUntilDeparture}m to departure`
+                  : minutesUntilDeparture === 0
+                  ? '0m (Arrived)'
+                  : minutesUntilDeparture >= -2
+                  ? `+${Math.abs(minutesUntilDeparture)}m (Waiting)`
                   : 'Departed'}
               </span>
             </div>
           </div>
         </div>
+
+        {/* Bus Status Row - Displayed below Countdown with label "bus status" */}
+        <div className="mt-2 p-2 rounded-sm bg-zinc-50 dark:bg-zinc-950/80 border border-zinc-200/80 dark:border-zinc-800/80 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-1.5">
+            <Bus className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+            <div>
+              <span className="text-[9px] text-zinc-500 block uppercase font-mono">bus status</span>
+              <span className="text-xs font-extrabold font-mono tracking-tight text-zinc-900 dark:text-white">
+                {busStatus}
+              </span>
+            </div>
+          </div>
+          <div className="text-right">
+            <span
+              className={`text-[10px] font-mono px-2 py-0.5 rounded-xs font-bold border inline-flex items-center gap-1 ${
+                busStatus === 'On the Way'
+                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800/40'
+                  : busStatus === 'Arrived'
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 animate-pulse'
+                  : busStatus === 'Waiting'
+                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
+                  : busStatus === 'Depart'
+                  ? 'bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800'
+                  : busStatus === 'Expired'
+                  ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700'
+                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700'
+              }`}
+            >
+              {busStatus === 'On the Way' && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />}
+              {busStatus === 'Arrived' && <CheckCircle className="w-3 h-3 text-emerald-600" />}
+              {busStatus === 'Waiting' && <Clock className="w-3 h-3 text-amber-600" />}
+              <span>{busStatus}</span>
+            </span>
+          </div>
+        </div>
+
+        {/* During 2-Minute Waiting & Depart Window: Acknowledge scan for depart vs check-in only */}
+        {isWaitingOrDepartWindow && isCheckedIn && (
+          <div className="mt-2 p-2.5 rounded-sm bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/50 text-xs space-y-1.5">
+            <div className="flex items-start justify-between gap-1.5">
+              <div>
+                <span className="font-bold text-amber-900 dark:text-amber-200 block text-[11px]">
+                  {busStatus === 'Arrived' ? 'Bus Arrived · 2m Departure Window Open' : 'Bus Waiting at Bay (2m Departure Window)'}
+                </span>
+                <p className="text-[10px] text-amber-800 dark:text-amber-300">
+                  During these 2 minutes, acknowledge your depart scan to board safely, or remain check-in only without depart to trigger the 2 score penalty rule.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => (onScanForDepart ? onScanForDepart(booking.id) : onOpenBoardingPass(booking))}
+                className="flex-1 py-1 px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-sm shadow-2xs flex items-center justify-center gap-1.5 transition"
+              >
+                <CheckCircle className="w-3.5 h-3.5" />
+                Scan for Depart
+              </button>
+              <button
+                onClick={() => onOpenBoardingPass(booking)}
+                className="py-1 px-2.5 bg-zinc-200 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 font-semibold text-xs rounded-sm transition"
+              >
+                Pass Info
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Check-In & Ticket Lifecycle Status Section */}
         <div className="mt-2.5">
@@ -225,9 +301,9 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
               <span>Expired at T−10: Check-in missed. Seat released (+1 Minor point).</span>
             </div>
           ) : isNoShow ? (
-            <div className="p-2 rounded-sm bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5 text-xs">
-              <AlertCircle className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-              <span>No-Show: Checked in but failed to board before departure (+1 Major point).</span>
+            <div className="p-2 rounded-sm bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-200 flex items-center gap-1.5 text-xs">
+              <AlertCircle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+              <span>No-Show: Checked in but failed to scan for depart before bus departed (2 score penalty applied).</span>
             </div>
           ) : isWithinCheckInWindow ? (
             /* Inside T-30 to T-10 Window */
