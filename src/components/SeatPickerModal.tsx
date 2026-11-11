@@ -7,6 +7,7 @@ interface SeatPickerModalProps {
   trip: BusTrip;
   currentUser: DemoUser;
   currentTimeStr: string;
+  hasActiveBookingLimit?: boolean;
   onConfirmSeat: (tripId: string, seatId: string) => void;
   onClose: () => void;
 }
@@ -15,6 +16,7 @@ export const SeatPickerModal: React.FC<SeatPickerModalProps> = ({
   trip,
   currentUser,
   currentTimeStr,
+  hasActiveBookingLimit = false,
   onConfirmSeat,
   onClose,
 }) => {
@@ -69,8 +71,13 @@ export const SeatPickerModal: React.FC<SeatPickerModalProps> = ({
           </button>
         </div>
 
-        {/* Schedule Passed / Booking Closed Warning */}
-        {isTimePassed ? (
+        {/* Schedule Passed / Booking Limit / Closed Warning */}
+        {hasActiveBookingLimit ? (
+          <div className="p-2.5 bg-zinc-100 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700 flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300 font-medium">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-zinc-500" />
+            <span>You have reached the <strong>maximum limit of 2 active bookings</strong>. Cancel an existing reservation to book another seat.</span>
+          </div>
+        ) : isTimePassed ? (
           <div className="p-2.5 bg-zinc-100 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-700 flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300 font-medium">
             <AlertTriangle className="w-4 h-4 shrink-0 text-zinc-500" />
             <span>This bus schedule has passed. Booking is closed and <strong>Not Available</strong>.</span>

@@ -14,7 +14,16 @@ export interface BusStop {
   radiusMeters?: number; // e.g. 100m for APU, 120m for LRT Bukit Jalil
 }
 
-export type TripStatus = 'SCHEDULED' | 'BOARDING' | 'DELAYED' | 'DEPARTED' | 'CANCELLED' | 'COMPLETED';
+export type TripStatus =
+  | 'WAITING'     // Bus waiting at station bay / scheduled
+  | 'ARRIVED'     // Bus has arrived at pickup stop
+  | 'BOARDING'    // Boarding in progress
+  | 'DEPARTED'    // Bus has departed pickup bay (departed without scan = 2 score penalty)
+  | 'ON_THE_WAY'  // Bus en route / on the way to destination
+  | 'SCHEDULED'   // Timetabled schedule
+  | 'DELAYED'     // Service delayed
+  | 'CANCELLED'   // Service cancelled
+  | 'COMPLETED';  // Trip completed
 
 export interface BusTrip {
   id: string;

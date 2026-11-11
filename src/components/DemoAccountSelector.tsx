@@ -30,7 +30,7 @@ export const DemoAccountSelector: React.FC<DemoAccountSelectorProps> = ({ onSele
           <span>Select Demo Persona (Section 19.1)</span>
         </div>
         <p className="text-[11px] text-zinc-600 dark:text-zinc-400 leading-relaxed">
-          Select a persona to test the interactive scenario: <strong className="text-zinc-900 dark:text-white font-semibold">Rani</strong> (claims seat on Bus A), <strong className="text-zinc-900 dark:text-white font-semibold">Ryan</strong> (expires at 07:50), <strong className="text-zinc-900 dark:text-white font-semibold">Sarah</strong> (active QR), or <strong className="text-zinc-900 dark:text-white font-semibold">Daniel</strong> (Driver).
+          Select a persona to test the interactive scenario: <strong className="text-zinc-900 dark:text-white font-semibold">Rani</strong> (claims seat on Bus A), <strong className="text-zinc-900 dark:text-white font-semibold">Ryan</strong> (expires at 07:50), <strong className="text-zinc-900 dark:text-white font-semibold">Sarah</strong> (active QR), <strong className="text-rose-600 dark:text-rose-400 font-semibold">Marcus</strong> (6/6 penalties suspended), or <strong className="text-zinc-900 dark:text-white font-semibold">Daniel</strong> (Driver).
         </p>
       </div>
 

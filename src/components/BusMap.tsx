@@ -217,6 +217,31 @@ export const BusMap: React.FC<BusMapProps> = ({
     return false;
   }, [bookings, activeFrom, activeTo, trips, currentTimeStr]);
 
+  // Operational status of current bus: (on the way, arrived, waiting, depart)
+  const activeBusOperationalStatus = useMemo<'waiting' | 'arrived' | 'on the way' | 'depart'>(() => {
+    // Check trip matching active route
+    const matchingTrip = activeFrom && activeTo
+      ? trips.find(
+          (t) =>
+            (t.fromStopId === activeFrom.id && t.toStopId === activeTo.id) ||
+            (t.fromStopId === activeTo.id && t.toStopId === activeFrom.id)
+        )
+      : trips.find((t) => t.id === 'demo-a-0800') || trips[0];
+
+    const minsUntil = matchingTrip ? getMinutesUntilDeparture(currentTimeStr, matchingTrip.departureTime) : 10;
+
+    if (matchingTrip?.tripStatus === 'DEPARTED' || minsUntil < 0 || isRoutePassed) {
+      return 'depart';
+    }
+    if (matchingTrip?.tripStatus === 'BOARDING' || (minsUntil <= 10 && minsUntil >= 0)) {
+      return 'arrived';
+    }
+    if (minsUntil > 10 && minsUntil <= 25) {
+      return 'on the way';
+    }
+    return 'waiting';
+  }, [activeFrom, activeTo, trips, currentTimeStr, isRoutePassed]);
+
   // Real road waypoints strictly around Bukit Jalil 57000 / APU TPM
   const activeWaypoints = useMemo<LocationCoord[]>(() => {
     if (!activeFrom || !activeTo) {
@@ -312,10 +337,12 @@ export const BusMap: React.FC<BusMapProps> = ({
         <div className="bg-white/95 dark:bg-zinc-900/95 backdrop-blur px-2.5 py-1 rounded-md border border-zinc-200 dark:border-zinc-800 flex items-center gap-2 pointer-events-auto shadow-2xs">
           <div
             className={`w-2 h-2 rounded-xs ${
-              isRoutePassed
+              activeBusOperationalStatus === 'depart'
                 ? 'bg-zinc-400'
-                : isBookedRoute
+                : activeBusOperationalStatus === 'arrived'
                 ? 'bg-emerald-500 animate-pulse'
+                : activeBusOperationalStatus === 'on the way'
+                ? 'bg-emerald-600 animate-bounce'
                 : 'bg-zinc-400'
             }`}
           />
@@ -324,16 +351,19 @@ export const BusMap: React.FC<BusMapProps> = ({
               ? `${activeFrom?.shortCode} ➔ ${activeTo?.shortCode}`
               : 'AP-BUS Network (14 Stops)'}
           </span>
+          {/* 4 Bus Status Badges: waiting, on the way, arrived, depart */}
           <span
-            className={`text-[9px] px-1 py-0.2 rounded-xs font-mono font-medium ${
-              isRoutePassed
-                ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border border-zinc-300 dark:border-zinc-700'
-                : isBookedRoute
-                ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40'
-                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500'
+            className={`text-[9px] px-1.5 py-0.2 rounded-xs font-mono font-bold uppercase ${
+              activeBusOperationalStatus === 'depart'
+                ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700'
+                : activeBusOperationalStatus === 'arrived'
+                ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800/50'
+                : activeBusOperationalStatus === 'on the way'
+                ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40'
+                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border border-zinc-200 dark:border-zinc-700'
             }`}
           >
-            {isRoutePassed ? 'ROUTE PASSED (GRAY)' : isBookedRoute ? 'BOOKED ACTIVE' : 'SCROLLABLE'}
+            {activeBusOperationalStatus}
           </span>
         </div>
 

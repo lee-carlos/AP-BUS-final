@@ -304,6 +304,61 @@ export default function App() {
             });
           });
         }
+
+        // 2. Bus Departure & No-Show Auto-Tick:
+        // When currentTime reaches or passes departureTime, if bus has not departed yet, mark DEPARTED.
+        // If passenger only checked in and did NOT scan QR to board, issue 2 score penalty (1 Major).
+        if (minsUntil <= 0 && trip.tripStatus !== 'DEPARTED' && trip.tripStatus !== 'COMPLETED' && trip.tripStatus !== 'CANCELLED') {
+          // Update trip status to DEPARTED
+          setTrips((prevTrips) =>
+            prevTrips.map((t) =>
+              t.id === trip.id ? { ...t, tripStatus: 'DEPARTED' as const, boardingOpen: false } : t
+            )
+          );
+
+          // Check for checked-in passengers who did not scan QR
+          Object.entries(userBookings).forEach(([userId, bList]) => {
+            bList.forEach((b) => {
+              if (b.tripId === trip.id && b.status === 'CHECKED_IN') {
+                // Transition to NO_SHOW
+                setUserBookings((prev) => ({
+                  ...prev,
+                  [userId]: (prev[userId] || []).map((item) =>
+                    item.id === b.id ? { ...item, status: 'NO_SHOW' as const } : item
+                  ),
+                }));
+
+                // Apply 2-score penalty (1 Major = 2 pts)
+                const penaltyEval = evaluateNoShowPenalty(b, trip.tripStatus === 'DELAYED');
+                if (penaltyEval.points > 0) {
+                  setUsers((prevUsers) =>
+                    prevUsers.map((u) => {
+                      if (u.id === userId) {
+                        const newMajors = u.majorPenalties + penaltyEval.majorPoints;
+                        const newTotal = u.penaltyPoints + penaltyEval.points; // +2 score
+                        return {
+                          ...u,
+                          majorPenalties: newMajors,
+                          penaltyPoints: newTotal,
+                          penaltyStrikes: Math.floor(newTotal / 2),
+                          isRestricted: newTotal >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD,
+                        };
+                      }
+                      return u;
+                    })
+                  );
+
+                  const targetUser = users.find((u) => u.id === userId);
+                  showNotice(
+                    'Bus Departed - 2 Score Penalty',
+                    `${targetUser?.name || 'Passenger'} checked in but did not scan QR to board before departure (${trip.departureTime}). 2 penalty points issued.`,
+                    'alert'
+                  );
+                }
+              }
+            });
+          });
+        }
       });
     },
     [trips, userBookings, users, currentUser, seatAlerts]
@@ -704,15 +759,20 @@ export default function App() {
       prev.map((t) => (t.id === tripId ? { ...t, boardingOpen: willBeOpen } : t))
     );
 
-    // If closing boarding, all checked-in passengers who have not boarded receive No-Show penalty
+    // If closing boarding, all checked-in passengers who have not boarded receive No-Show penalty (2 points / 1 Major)
     if (!willBeOpen) {
       const isTripCancelledOrDelayed =
         targetTrip.tripStatus === 'CANCELLED' || targetTrip.tripStatus === 'DELAYED';
 
+      // Transition trip status to DEPARTED upon closing boarding
+      setTrips((prev) =>
+        prev.map((t) => (t.id === tripId ? { ...t, tripStatus: 'DEPARTED' as const } : t))
+      );
+
       Object.entries(userBookings).forEach(([userId, bList]) => {
         bList.forEach((b) => {
           if (b.tripId === tripId && b.status === 'CHECKED_IN') {
-            // Transition to NO_SHOW
+            // Transition to NO_SHOW (passenger checked in but did not scan QR to depart)
             setUserBookings((prev) => ({
               ...prev,
               [userId]: (prev[userId] || []).map((item) =>
@@ -720,14 +780,15 @@ export default function App() {
               ),
             }));
 
-            // Evaluate 1 Major penalty (2 points)
+            // Evaluate penalty of 2 score (1 Major penalty) per rule:
+            // "whenever the bus depart, but the person only check in and not scan the qr for depart it will count as penalty of 2 score"
             const penaltyEval = evaluateNoShowPenalty(b, isTripCancelledOrDelayed);
             if (penaltyEval.points > 0) {
               setUsers((prevUsers) =>
                 prevUsers.map((u) => {
                   if (u.id === userId) {
                     const newMajors = u.majorPenalties + penaltyEval.majorPoints;
-                    const newTotal = u.penaltyPoints + penaltyEval.points;
+                    const newTotal = u.penaltyPoints + penaltyEval.points; // +2 score
                     return {
                       ...u,
                       majorPenalties: newMajors,
@@ -745,11 +806,15 @@ export default function App() {
       });
 
       showNotice(
-        'Boarding Closed',
-        `Boarding closed for ${targetTrip.routeName}. Unboarded checked-in passengers penalized for No-Show.`,
-        'warning'
+        'Bus Departed - 2 Penalty Score Issued',
+        `Bus ${targetTrip.routeName} has departed. Checked-in passengers who did not scan QR to depart received a 2-score penalty.`,
+        'alert'
       );
     } else {
+      // Set to BOARDING
+      setTrips((prev) =>
+        prev.map((t) => (t.id === tripId ? { ...t, tripStatus: 'BOARDING' as const } : t))
+      );
       showNotice('Boarding Open', `Boarding is now open for ${targetTrip.routeName}. Ready to scan passes.`, 'info');
     }
   };
@@ -1028,16 +1093,42 @@ export default function App() {
 
           {/* Primary Action Button: Open Shuttle Schedule & Booking */}
           <div className="px-3 py-2.5">
-            <button
-              onClick={() => setIsScheduleOpen(true)}
-              className="w-full py-2.5 px-4 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-2xs active:scale-[0.99] transition-all tracking-wide"
-            >
-              <Bus className="w-4 h-4 shrink-0" />
-              <span>BOOK A SHUTTLE SEAT</span>
-              <span className="text-[10px] bg-emerald-700/90 text-emerald-100 px-1.5 py-0.5 rounded-xs font-mono uppercase tracking-wider ml-1">
-                Timetable
-              </span>
-            </button>
+            {currentUserBookings.filter((b) => b.status === 'RESERVED' || b.status === 'CHECKED_IN' || b.status === 'BOARDED').length >= 2 ? (
+              <button
+                onClick={() => setIsScheduleOpen(true)}
+                className="w-full py-2.5 px-4 rounded-md bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-all tracking-wide"
+                title="2 active bookings limit reached. View schedules (all new bookings locked in gray)."
+              >
+                <Bus className="w-4 h-4 shrink-0 text-zinc-500" />
+                <span>BOOKING ON LIMIT (2/2 ACTIVE)</span>
+                <span className="text-[10px] bg-zinc-300 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 px-1.5 py-0.5 rounded-xs font-mono uppercase tracking-wider ml-1">
+                  VIEW TIMETABLE
+                </span>
+              </button>
+            ) : currentUser.penaltyPoints >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD ? (
+              <button
+                onClick={() => setIsScheduleOpen(true)}
+                className="w-full py-2.5 px-4 rounded-md bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-all tracking-wide"
+                title="Account suspended due to 6/6 penalty points."
+              >
+                <Bus className="w-4 h-4 shrink-0 text-zinc-400" />
+                <span>BOOKING SUSPENDED (6/6 PENALTIES)</span>
+                <span className="text-[10px] bg-zinc-300 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 px-1.5 py-0.5 rounded-xs font-mono uppercase tracking-wider ml-1">
+                  VIEW ONLY
+                </span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setIsScheduleOpen(true)}
+                className="w-full py-2.5 px-4 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-2xs active:scale-[0.99] transition-all tracking-wide"
+              >
+                <Bus className="w-4 h-4 shrink-0" />
+                <span>BOOK A SHUTTLE SEAT</span>
+                <span className="text-[10px] bg-emerald-700/90 text-emerald-100 px-1.5 py-0.5 rounded-xs font-mono uppercase tracking-wider ml-1">
+                  Timetable
+                </span>
+              </button>
+            )}
           </div>
 
           {/* Floating / Docked Simulator Bar */}
@@ -1092,6 +1183,7 @@ export default function App() {
           trip={seatPickerTrip}
           currentUser={currentUser}
           currentTimeStr={simulatedTimeStr}
+          hasActiveBookingLimit={currentUserBookings.filter((b) => b.status === 'RESERVED' || b.status === 'CHECKED_IN' || b.status === 'BOARDED').length >= 2}
           onConfirmSeat={handleConfirmSeat}
           onClose={() => setSeatPickerTrip(null)}
         />
