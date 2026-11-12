@@ -1,4 +1,8 @@
 # AP-BUS
+Book the seat, Skip the queue!
+
+# Description
+Recently, APU Students have to face a problem where bus queue is too long and the waiting time is too long. Furthermore, after waiting for a long time, There will be a line-cutter that took the rights of people who had been in the queue. Thus, AP-BUS is here as an app for APU Students that allows them to Book - Check in - Board for their seat in bus.
 
 # Team Information
 | Team Name | Github Account |
@@ -16,3 +20,5 @@
 | App Link | |
 | Demo Video | |
 | Pitch Deck | - |
+
+# Key Features
