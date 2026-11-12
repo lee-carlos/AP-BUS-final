@@ -17,7 +17,7 @@ Recently, APU Students have to face a problem where bus queue is too long and th
 | Resource | Link |
 |------|------|
 | Github Repo | https://github.com/lee-carlos/AP-BUS-final.git |
-| App Link | |
+| App Link | https://ai.studio/apps/de8a6ed8-6141-4633-8500-71953dfbdde8?fullscreenApplet=true |
 | Demo Video | |
 | Pitch Deck | - |
 
