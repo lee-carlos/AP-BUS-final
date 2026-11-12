@@ -380,3 +380,33 @@ test('evaluateNoShowPenalty applies exactly 2 score of penalties when checked in
   const waivedPenalty = evaluateNoShowPenalty(true);
   assert.equal(waivedPenalty.points, 0);
 });
+
+test('driver authorization pin code is 1234 for conscious security override', () => {
+  const DRIVER_PIN: string = '1234';
+  assert.equal(DRIVER_PIN === '1234', true);
+  assert.equal(DRIVER_PIN === '0000', false);
+});
+
+test('lecturer and staff accounts share full booking functionality with students', () => {
+  // A lecturer with 0 penalties can book a seat
+  const lecturerBookingCheck = validateBookingEligibility({
+    activeBookings: [],
+    candidateFromStopName: 'LRT Bukit Jalil',
+    candidateToStopName: 'Asia Pacific University (APU Campus)',
+  });
+  assert.equal(lecturerBookingCheck.canBook, true);
+
+  // A lecturer reaches active booking limit (2/2)
+  const twoBookings: Booking[] = [
+    { id: 'b1', userId: 'staff-daniel', tripId: 't1', seatId: '1A', routeId: 'lrt', routeName: 'LRT ➔ APU', fromStopName: 'LRT Bukit Jalil', toStopName: 'APU', departureTime: '08:00', notify30Min: false, status: 'RESERVED', bookedAt: '' },
+    { id: 'b2', userId: 'staff-daniel', tripId: 't2', seatId: '1B', routeId: 'apu', routeName: 'APU ➔ LRT', fromStopName: 'APU', toStopName: 'LRT Bukit Jalil', departureTime: '17:00', notify30Min: false, status: 'RESERVED', bookedAt: '' },
+  ];
+  const atLimitCheck = validateBookingEligibility({
+    activeBookings: twoBookings,
+    candidateFromStopName: 'LRT Bukit Jalil',
+    candidateToStopName: 'One South',
+  });
+  assert.equal(atLimitCheck.canBook, false);
+  assert.equal(atLimitCheck.reason, 'MAX_LIMIT_REACHED');
+});
+

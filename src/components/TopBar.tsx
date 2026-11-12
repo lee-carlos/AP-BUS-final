@@ -114,7 +114,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 <p className="text-[10px] text-zinc-500 dark:text-zinc-400 font-mono">
                   {currentUser.studentId} · {currentUser.email}
                 </p>
-                {currentUser.role === 'Student' && (
+                {(currentUser.role === 'Student' || currentUser.role === 'Lecturer' || currentUser.role === 'Staff') && (
                   <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-mono mt-0.5">
                     Penalties: {currentUser.penaltyPoints}/6 pts ({currentUser.minorPenalties}m, {currentUser.majorPenalties}M)
                   </p>
@@ -132,7 +132,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 <span>Switch Demo Persona</span>
               </button>
 
-              {(currentUser.role === 'Staff' || currentUser.role === 'Admin') && onOpenDriverConsole && (
+              {(currentUser.role === 'Staff' || currentUser.role === 'Lecturer' || currentUser.role === 'Driver') && onOpenDriverConsole && (
                 <button
                   onClick={() => {
                     setShowMoreMenu(false);
@@ -141,7 +141,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   className="w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2 text-emerald-600 dark:text-emerald-400 transition"
                 >
                   <Bus className="w-3.5 h-3.5" />
-                  <span>Open Driver Boarding Console</span>
+                  <span>Open Quick Boarding Console</span>
                 </button>
               )}
 

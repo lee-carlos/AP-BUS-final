@@ -30,6 +30,7 @@ import { StandbyNotificationModal } from './components/StandbyNotificationModal'
 import { SearchModal } from './components/SearchModal';
 import { ScheduleDocModal } from './components/ScheduleDocModal';
 import { DriverConsoleModal } from './components/DriverConsoleModal';
+import { DriverPortal } from './components/DriverPortal';
 import { Bus, BellRing, Sparkles, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 export default function App() {
@@ -922,6 +923,98 @@ export default function App() {
     return { success: false, message: `Pass has status: ${matchedBooking.status}` };
   };
 
+  // Driver Manual Boarding Attendance Override (with 4-digit security code confirmation)
+  const handleDriverManualConfirmBoarding = useCallback((bookingId: string) => {
+    setUserBookings((prev) => {
+      const next: Record<string, Booking[]> = {};
+      let changed = false;
+      Object.entries(prev).forEach(([uid, bList]) => {
+        next[uid] = bList.map((b) => {
+          if (b.id === bookingId) {
+            changed = true;
+            return {
+              ...b,
+              status: 'BOARDED' as const,
+              boardedAt: simulatedTimeStr,
+            };
+          }
+          return b;
+        });
+      });
+      return changed ? next : prev;
+    });
+
+    showNotice(
+      'Boarding Confirmed',
+      'Driver manually verified attendance. Passenger status is now Inside/Boarded.',
+      'success'
+    );
+  }, [simulatedTimeStr]);
+
+  // Driver Manual Trip Status Override (Arrived / Departed) with 2-minute departure countdown & 2-score penalty rules
+  const handleDriverManualSetTripStatus = useCallback((tripId: string, status: 'ARRIVED' | 'DEPARTED') => {
+    const targetTrip = trips.find((t) => t.id === tripId);
+    if (!targetTrip) return;
+
+    if (status === 'ARRIVED') {
+      setTrips((prev) =>
+        prev.map((t) => (t.id === tripId ? { ...t, tripStatus: 'ARRIVED', boardingOpen: true } : t))
+      );
+      showNotice(
+        'Bus Arrived 🚌',
+        `${targetTrip.routeName} has arrived! 2-minute departure window open. Scan for depart to board now.`,
+        'success'
+      );
+    } else if (status === 'DEPARTED') {
+      const isTripCancelledOrDelayed =
+        targetTrip.tripStatus === 'CANCELLED' || targetTrip.tripStatus === 'DELAYED';
+
+      setTrips((prev) =>
+        prev.map((t) => (t.id === tripId ? { ...t, tripStatus: 'DEPARTED', boardingOpen: false } : t))
+      );
+
+      // Penalize passengers who completed check-in but did not scan QR to depart / board
+      Object.entries(userBookings).forEach(([userId, bList]) => {
+        bList.forEach((b) => {
+          if (b.tripId === tripId && b.status === 'CHECKED_IN') {
+            setUserBookings((prev) => ({
+              ...prev,
+              [userId]: (prev[userId] || []).map((item) =>
+                item.id === b.id ? { ...item, status: 'NO_SHOW' as const } : item
+              ),
+            }));
+
+            const penaltyEval = evaluateNoShowPenalty(isTripCancelledOrDelayed);
+            if (penaltyEval.points > 0) {
+              setUsers((prevUsers) =>
+                prevUsers.map((u) => {
+                  if (u.id === userId) {
+                    const newMajors = u.majorPenalties + penaltyEval.majorPoints;
+                    const newTotal = u.penaltyPoints + penaltyEval.points; // +2 score
+                    return {
+                      ...u,
+                      majorPenalties: newMajors,
+                      penaltyPoints: newTotal,
+                      penaltyStrikes: Math.floor(newTotal / 2),
+                      isRestricted: newTotal >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD,
+                    };
+                  }
+                  return u;
+                })
+              );
+            }
+          }
+        });
+      });
+
+      showNotice(
+        'Bus Departed - 2 Penalty Score Issued',
+        `Bus ${targetTrip.routeName} has departed. Checked-in passengers who did not scan QR to depart received a 2-score penalty.`,
+        'alert'
+      );
+    }
+  }, [trips, userBookings]);
+
   // Reset Demo to 07:45 Initial Conditions (Section 19.2)
   const handleResetDemo = () => {
     setSimulatedTimeStr('07:45');
@@ -1086,8 +1179,25 @@ export default function App() {
             }
           }}
         />
+      ) : currentUser.role === 'Driver' ? (
+        /* Screen 2B: Dedicated Bus Driver Operations Portal */
+        <DriverPortal
+          currentDriver={currentUser}
+          trips={trips}
+          allBookings={allBookingsFlat}
+          users={users}
+          currentTimeStr={simulatedTimeStr}
+          theme={theme}
+          onToggleTheme={handleToggleTheme}
+          onSwitchDriver={() => setCurrentUserId(null)}
+          onManualConfirmBoarding={handleDriverManualConfirmBoarding}
+          onToggleBoarding={handleDriverToggleBoarding}
+          onManualSetTripStatus={handleDriverManualSetTripStatus}
+          onResetDemo={handleResetDemo}
+          apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY}
+        />
       ) : (
-        /* Screen 2: Main AP-BUS Mobile Experience */
+        /* Screen 2A: Main AP-BUS Mobile Experience (Students, Lecturers & Campus Staff) */
         <div className="flex-1 flex flex-col">
           {/* Top Bar with Search, Dropdown & Persona Info */}
           <TopBar

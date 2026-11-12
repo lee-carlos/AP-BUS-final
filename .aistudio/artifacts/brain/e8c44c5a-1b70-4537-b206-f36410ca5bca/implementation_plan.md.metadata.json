@@ -1,6 +1,0 @@
-{
-  "summary":  "Implementation plan aligning the APU ShuttleMate app with Master Project Context v2.0 specifications, integrating auto-tick deadline management, strict FCFS Claim transfers, Minor/Major penalty engine, capacity buckets, and official demo personas.",
-  "updatedAt":  "2026-11-10T07:01:42.693529319Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

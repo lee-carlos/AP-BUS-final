@@ -100,7 +100,7 @@ export interface Booking {
   notes?: string;
 }
 
-export type UserRole = 'Student' | 'Staff' | 'Admin';
+export type UserRole = 'Student' | 'Lecturer' | 'Staff' | 'Driver';
 
 export interface PenaltyRecord {
   id: string;
