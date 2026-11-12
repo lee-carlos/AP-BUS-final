@@ -10,6 +10,8 @@ interface DriverRouteMapProps {
   busStatus: string; // 'On the Way' | 'Arrived' | 'Waiting' | 'Depart' | 'Not Available Now' | 'Expired'
   theme: 'light' | 'dark';
   apiKey?: string;
+  vehicleProgress?: number;
+  onVehicleProgressChange?: (progress: number) => void;
 }
 
 // Sub-component to manage Route Polyline and 250m Stop Geofence circles on Google Map
@@ -120,6 +122,8 @@ export const DriverRouteMap: React.FC<DriverRouteMapProps> = ({
   busStatus,
   theme,
   apiKey,
+  vehicleProgress: externalProgress,
+  onVehicleProgressChange,
 }) => {
   const mapsKey = apiKey || (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string) || '';
 
@@ -136,11 +140,22 @@ export const DriverRouteMap: React.FC<DriverRouteMapProps> = ({
     return 15;
   };
 
-  const [vehicleProgress, setVehicleProgress] = useState<number>(getInitialProgress);
+  const [internalProgress, setInternalProgress] = useState<number>(getInitialProgress);
 
   useEffect(() => {
-    setVehicleProgress(getInitialProgress());
-  }, [busStatus]);
+    if (externalProgress === undefined) {
+      setInternalProgress(getInitialProgress());
+    }
+  }, [busStatus, externalProgress]);
+
+  const vehicleProgress = externalProgress !== undefined ? externalProgress : internalProgress;
+
+  const handleUpdateProgress = (p: number) => {
+    setInternalProgress(p);
+    if (onVehicleProgressChange) {
+      onVehicleProgressChange(p);
+    }
+  };
 
   // Route Stops info
   const fromStop = useMemo(() => {
@@ -592,7 +607,7 @@ export const DriverRouteMap: React.FC<DriverRouteMapProps> = ({
         <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded bg-slate-950/85 border border-slate-700 text-[9px] text-slate-300 z-10">
           <span className="hidden sm:inline">Simulate:</span>
           <button
-            onClick={() => setVehicleProgress(10)}
+            onClick={() => handleUpdateProgress(10)}
             className={`px-1.5 py-0.5 rounded cursor-pointer ${
               vehicleProgress <= 25 ? 'bg-emerald-600 text-white font-bold' : 'hover:bg-slate-800'
             }`}
@@ -600,17 +615,17 @@ export const DriverRouteMap: React.FC<DriverRouteMapProps> = ({
             Bay
           </button>
           <button
-            onClick={() => setVehicleProgress(50)}
+            onClick={() => handleUpdateProgress(50)}
             className={`px-1.5 py-0.5 rounded cursor-pointer ${
               vehicleProgress > 25 && vehicleProgress < 85
-                ? 'bg-emerald-600 text-white font-bold'
+                ? 'bg-amber-600 text-white font-bold'
                 : 'hover:bg-slate-800'
             }`}
           >
             Highway
           </button>
           <button
-            onClick={() => setVehicleProgress(95)}
+            onClick={() => handleUpdateProgress(95)}
             className={`px-1.5 py-0.5 rounded cursor-pointer ${
               vehicleProgress >= 85 ? 'bg-emerald-600 text-white font-bold' : 'hover:bg-slate-800'
             }`}

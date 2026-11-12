@@ -127,6 +127,15 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   // Driver Simulation Range State (like the student check-in range toggle)
   const [driverIsInRange, setDriverIsInRange] = useState<boolean>(true);
 
+  // Radar vehicle simulation progress (10% = Bay, 50% = Highway, 95% = Arrived)
+  const [vehicleProgress, setVehicleProgress] = useState<number>(10);
+
+  // During highway simulation (25% to 85%), vehicle is in transit on the highway
+  const isHighway = vehicleProgress > 25 && vehicleProgress < 85;
+
+  // Status can only be marked as Arrived or Depart if in range AND not on the highway
+  const canMarkStatus = driverIsInRange && !isHighway;
+
   // Collapsible toggle for expired/unavailable buses in bottom timetable
   const [isPassedExpanded, setIsPassedExpanded] = useState<boolean>(false);
   const [isSelectionUnavailableExpanded, setIsSelectionUnavailableExpanded] = useState<boolean>(false);
@@ -306,8 +315,12 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     setManualPinError(null);
   };
 
-  // Manual Status Change Handler (Mark Arrived / Mark Departed) with Range Check & PIN
+  // Manual Status Change Handler (Mark Arrived / Mark Departed) with Highway & Range Check
   const handleInitiateStatusAction = (action: 'ARRIVED' | 'DEPARTED') => {
+    if (isHighway) {
+      showToast('Action Blocked: Bus is currently in Highway simulation. Cannot mark as arrived or depart.');
+      return;
+    }
     if (!driverIsInRange) {
       showToast('Action Blocked: Driver is Out of Range (Must be within bus bay radius).');
       return;
@@ -700,6 +713,17 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
           busStatus={tripBusLifecycleStatus}
           theme={theme}
           apiKey={mapsKey}
+          vehicleProgress={vehicleProgress}
+          onVehicleProgressChange={(newProgress) => {
+            setVehicleProgress(newProgress);
+            if (newProgress > 25 && newProgress < 85) {
+              showToast('Highway Simulation Active: Bus on highway. Mark Arrived & Depart buttons turned gray and disabled.');
+            } else if (newProgress <= 25) {
+              showToast('Bay Simulation Active: Bus at Departure Bay. In range.');
+            } else {
+              showToast('Arrived Simulation Active: Bus at Destination Bay. In range.');
+            }
+          }}
         />
       </div>
 
@@ -736,21 +760,46 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
         {/* Driver GPS Proximity & Simulation Range Switch */}
         <div className="flex items-center justify-between text-[11px] p-2 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 font-mono">
           <div className="flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full ${driverIsInRange ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+            <span
+              className={`w-2 h-2 rounded-full ${
+                !canMarkStatus
+                  ? isHighway
+                    ? 'bg-amber-500 animate-pulse'
+                    : 'bg-rose-500'
+                  : 'bg-emerald-500 animate-pulse'
+              }`}
+            />
             <span className="text-zinc-700 dark:text-zinc-300">
               Proximity:{' '}
-              <strong className={driverIsInRange ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-500'}>
-                {driverIsInRange ? 'In Range (Bus Stop Bay · 25m)' : 'Out of Range (5.2km away)'}
+              <strong
+                className={
+                  canMarkStatus
+                    ? 'text-emerald-700 dark:text-emerald-400'
+                    : isHighway
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-rose-500'
+                }
+              >
+                {isHighway
+                  ? 'On Highway (In Transit · Cannot Signal)'
+                  : driverIsInRange
+                  ? 'In Range (Bus Stop Bay · 25m)'
+                  : 'Out of Range (5.2km away)'}
               </strong>
             </span>
           </div>
 
           <button
             onClick={() => {
-              setDriverIsInRange(!driverIsInRange);
-              showToast(driverIsInRange ? 'Driver GPS Simulated: Out of Range' : 'Driver GPS Simulated: In Range (Bus Bay)');
+              const nextRange = !driverIsInRange;
+              setDriverIsInRange(nextRange);
+              showToast(
+                nextRange
+                  ? 'Driver GPS Simulated: In Range (Bus Bay)'
+                  : 'Driver GPS Simulated: Out of Range (Buttons turned gray and disabled)'
+              );
             }}
-            className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white"
+            className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white cursor-pointer"
           >
             Toggle Range
           </button>
@@ -760,12 +809,19 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => handleInitiateStatusAction('ARRIVED')}
+            disabled={!canMarkStatus}
             className={`py-2 px-3 rounded text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition border ${
-              driverIsInRange
-                ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-600 shadow-2xs active:scale-[0.98]'
-                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 border-zinc-200 dark:border-zinc-700 cursor-not-allowed opacity-60'
+              canMarkStatus
+                ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-600 shadow-2xs active:scale-[0.98] cursor-pointer'
+                : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 border-zinc-300 dark:border-zinc-700 cursor-not-allowed opacity-60 shadow-none'
             }`}
-            title="Signal bus has arrived. Starts 2-minute departure window for passengers to scan & board."
+            title={
+              !canMarkStatus
+                ? isHighway
+                  ? 'Disabled: Bus is in Highway simulation. Arrived signal only available at terminal bay.'
+                  : 'Disabled: Driver is Out of Range. Must be within bus bay radius.'
+                : 'Signal bus has arrived. Starts 2-minute departure window for passengers to scan & board.'
+            }
           >
             <MapPin className="w-3.5 h-3.5" />
             <span>Mark Arrived (PIN)</span>
@@ -773,17 +829,36 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
 
           <button
             onClick={() => handleInitiateStatusAction('DEPARTED')}
+            disabled={!canMarkStatus}
             className={`py-2 px-3 rounded text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition border ${
-              driverIsInRange
-                ? 'bg-rose-600 hover:bg-rose-500 text-white border-rose-600 shadow-2xs active:scale-[0.98]'
-                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 border-zinc-200 dark:border-zinc-700 cursor-not-allowed opacity-60'
+              canMarkStatus
+                ? 'bg-rose-600 hover:bg-rose-500 text-white border-rose-600 shadow-2xs active:scale-[0.98] cursor-pointer'
+                : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 border-zinc-300 dark:border-zinc-700 cursor-not-allowed opacity-60 shadow-none'
             }`}
-            title="Signal bus has departed. Passengers who checked in but did not scan to depart will receive 2-score penalty."
+            title={
+              !canMarkStatus
+                ? isHighway
+                  ? 'Disabled: Bus is in Highway simulation. Depart signal only available at departure bay.'
+                  : 'Disabled: Driver is Out of Range. Must be within bus bay radius.'
+                : 'Signal bus has departed. Passengers who checked in but did not scan to depart will receive 2-score penalty.'
+            }
           >
             <ArrowRight className="w-3.5 h-3.5" />
             <span>Mark Departed (PIN)</span>
           </button>
         </div>
+
+        {/* Warning notification when buttons are disabled & grayed out */}
+        {!canMarkStatus && (
+          <div className="flex items-center justify-center gap-1.5 p-1.5 rounded bg-zinc-100 dark:bg-zinc-950/80 border border-zinc-200 dark:border-zinc-800 text-[10px] text-zinc-500 dark:text-zinc-400 font-mono">
+            <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+            <span>
+              {isHighway
+                ? 'Buttons grayed out: Bus is in Highway simulation (cannot mark Arrived / Depart).'
+                : 'Buttons grayed out: Driver is Out of Range (cannot mark Arrived / Depart).'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ========================================================================= */}
