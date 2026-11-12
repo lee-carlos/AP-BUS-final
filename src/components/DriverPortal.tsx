@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { BusTrip, Booking, DemoUser } from '../types/bus';
+import { BusTrip, Booking, DemoUser, LocationCoord } from '../types/bus';
 import { formatTime12h, getMinutesUntilDeparture, getBusLifecycleStatus } from '../utils/bookingRules';
-import { APU_STOPS } from '../data/apuRoutes';
+import { APU_STOPS, ROUTE_WAYPOINTS } from '../data/apuRoutes';
 import {
   Bus,
   ShieldCheck,
@@ -25,8 +25,10 @@ import {
   User,
   ArrowRight,
   Navigation,
+  ArrowLeftRight,
+  ShieldAlert,
 } from 'lucide-react';
-import { APIProvider, Map as GoogleMap, AdvancedMarker } from '@vis.gl/react-google-maps';
+import { DriverRouteMap } from './DriverRouteMap';
 
 interface DriverPortalProps {
   currentDriver: DemoUser;
@@ -44,8 +46,9 @@ interface DriverPortalProps {
   apiKey?: string;
 }
 
-// 4-digit code for all driver security authorizations per prompt specification
+// 4-digit security authorization code per APU driver guidelines
 const DRIVER_AUTH_CODE = '1234';
+
 
 export const DriverPortal: React.FC<DriverPortalProps> = ({
   currentDriver,
@@ -62,13 +65,40 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   onResetDemo,
   apiKey,
 }) => {
+  // Determine driver's dedicated assigned route corridor
+  // Each driver is assigned to one corridor: back-and-forth round trips only (no cross-route checking)
+  const assignedCorridorId = useMemo<string>(() => {
+    if (currentDriver.assignedRouteId) return currentDriver.assignedRouteId;
+    if (currentDriver.id === 'driver-muthu') return 'fortune-park';
+    return 'lrt'; // Captain Kamal default: LRT Bukit Jalil ⇄ APU Campus
+  }, [currentDriver]);
+
+  const assignedCorridorName = useMemo<string>(() => {
+    if (currentDriver.assignedCorridorName) return currentDriver.assignedCorridorName;
+    if (currentDriver.id === 'driver-muthu') return 'Fortune Park ⇄ APU Campus';
+    return 'LRT Bukit Jalil ⇄ APU Campus';
+  }, [currentDriver]);
+
+  // STRICT SINGLE-CORRIDOR RESTRICTION:
+  // Driver is ONLY allowed to see and drive schedules for their assigned corridor back and forth
+  const driverAssignedTrips = useMemo(() => {
+    return trips.filter((t) => t.routeId === assignedCorridorId);
+  }, [trips, assignedCorridorId]);
+
   // Currently assigned / selected bus trip ID
   const [assignedTripId, setAssignedTripId] = useState<string | null>(null);
 
-  // Route filter before schedule selection (driver can select route freely without code)
-  const [selectedRouteId, setSelectedRouteId] = useState<string>('all');
-  const [fromStopFilter, setFromStopFilter] = useState<string>('all');
-  const [toStopFilter, setToStopFilter] = useState<string>('all');
+  // Direction filter for driver's assigned corridor (All Roundtrips, Outbound to APU, Inbound to Stop)
+  const [directionFilter, setDirectionFilter] = useState<'all' | 'to_apu' | 'from_apu'>('all');
+
+  // Filtered trips for Step 1 based strictly on assigned corridor
+  const filteredCorridorTrips = useMemo(() => {
+    return driverAssignedTrips.filter((t) => {
+      if (directionFilter === 'to_apu' && t.toStopId !== 'apu') return false;
+      if (directionFilter === 'from_apu' && t.fromStopId !== 'apu') return false;
+      return true;
+    });
+  }, [driverAssignedTrips, directionFilter]);
 
   // Bus selection PIN verification modal state
   const [pendingTripToAssign, setPendingTripToAssign] = useState<BusTrip | null>(null);
@@ -76,7 +106,10 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   const [pinError, setPinError] = useState<string | null>(null);
 
   // Inspector trip (the trip the driver is inspecting seats/manifest for)
-  const [selectedScheduleTripId, setSelectedScheduleTripId] = useState<string>('demo-a-0800');
+  const [selectedScheduleTripId, setSelectedScheduleTripId] = useState<string>(() => {
+    const firstAvailable = driverAssignedTrips.find((t) => t.id === 'demo-a-0800') || driverAssignedTrips[0];
+    return firstAvailable ? firstAvailable.id : 'demo-a-0800';
+  });
 
   // Manual boarding QR fallback confirmation modal
   const [manualConfirmTarget, setManualConfirmTarget] = useState<{
@@ -106,47 +139,20 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Google Maps bounding box restricted strictly to Kuala Lumpur & Bukit Jalil transit corridor
+  // Google Maps bounding box restricted strictly to Kuala Lumpur & Bukit Jalil 57000 corridor
   const klMapBounds = useMemo(() => ({
-    north: 3.150,
-    south: 3.015,
-    west: 101.640,
-    east: 101.750,
+    north: 3.140,
+    south: 3.020,
+    west: 101.650,
+    east: 101.745,
   }), []);
-
-  // Quick preset routes for the driver to click
-  const routePresets = [
-    { id: 'all', label: 'All Routes' },
-    { id: 'lrt', label: 'LRT Bukit Jalil ➔ APU' },
-    { id: 'fortune-park', label: 'Fortune Park ➔ APU' },
-    { id: 'parkhill', label: 'Parkhill Residence ➔ APU' },
-    { id: 'city-of-green', label: 'City of Green ➔ APU' },
-    { id: 'bloomsvale', label: 'Bloomsvale / Harmony ➔ APU' },
-    { id: 'bayu-jalil', label: 'Bayu Jalil ➔ APU' },
-    { id: 'kuchai-sentral', label: 'Kuchai Sentral ➔ APU' },
-    { id: 'm-vertica', label: 'M Vertica ➔ APU' },
-    { id: 'divo', label: "D'Ivo Residence ➔ APU" },
-    { id: 'kingston', label: 'Kingston Hotel ➔ APU' },
-    { id: 'maple', label: 'The Maple ➔ APU' },
-    { id: 'mosque', label: 'APU ➔ Mosque (Fri Solat)' },
-  ];
-
-  // Filtered trips for Step 1 based on route selection
-  const filteredRouteTrips = useMemo(() => {
-    return trips.filter((t) => {
-      if (selectedRouteId !== 'all' && t.routeId !== selectedRouteId) return false;
-      if (fromStopFilter !== 'all' && t.fromStopId !== fromStopFilter) return false;
-      if (toStopFilter !== 'all' && t.toStopId !== toStopFilter) return false;
-      return true;
-    });
-  }, [trips, selectedRouteId, fromStopFilter, toStopFilter]);
 
   // Separate Available vs Expired/Unavailable trips for Step 1
   const { availableSelectionTrips, unavailableSelectionTrips } = useMemo(() => {
     const available: BusTrip[] = [];
     const unavailable: BusTrip[] = [];
 
-    filteredRouteTrips.forEach((t) => {
+    filteredCorridorTrips.forEach((t) => {
       const status = getBusLifecycleStatus(currentTimeStr, t.departureTime);
       const minsUntil = getMinutesUntilDeparture(currentTimeStr, t.departureTime);
       if (status === 'Expired' || status === 'Not Available Now' || minsUntil < 0) {
@@ -160,14 +166,15 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     unavailable.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
 
     return { availableSelectionTrips: available, unavailableSelectionTrips: unavailable };
-  }, [filteredRouteTrips, currentTimeStr]);
+  }, [filteredCorridorTrips, currentTimeStr]);
 
   // Sorted schedules for the bottom timetable on the driver page:
+  // STRICTLY FILTERED to the assigned corridor (no cross-route checking permitted)
   const { runningAndUpcomingTrips, passedTrips } = useMemo(() => {
     const upcoming: BusTrip[] = [];
     const passed: BusTrip[] = [];
 
-    trips.forEach((t) => {
+    driverAssignedTrips.forEach((t) => {
       const status = getBusLifecycleStatus(currentTimeStr, t.departureTime);
       const minsUntil = getMinutesUntilDeparture(currentTimeStr, t.departureTime);
       if (status === 'Expired' || minsUntil < 0) {
@@ -181,12 +188,13 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     passed.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
 
     return { runningAndUpcomingTrips: upcoming, passedTrips: passed };
-  }, [trips, currentTimeStr]);
+  }, [driverAssignedTrips, currentTimeStr]);
 
-  // Current trip under driver inspection
+  // Current trip under driver inspection (must be within assigned corridor)
   const activeInspectionTrip = useMemo(() => {
-    return trips.find((t) => t.id === selectedScheduleTripId) || trips[0];
-  }, [trips, selectedScheduleTripId]);
+    const match = driverAssignedTrips.find((t) => t.id === selectedScheduleTripId);
+    return match || driverAssignedTrips[0] || trips[0];
+  }, [driverAssignedTrips, selectedScheduleTripId, trips]);
 
   // Bookings for currently inspected trip
   const activeTripBookings = useMemo(() => {
@@ -237,6 +245,18 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     });
     return map;
   }, [activeTripBookings, users]);
+
+  // Waypoints for the driver's current active corridor in Bukit Jalil 57000
+  const activeCorridorWaypoints = useMemo<LocationCoord[]>(() => {
+    if (activeInspectionTrip.routeId && ROUTE_WAYPOINTS[activeInspectionTrip.routeId]) {
+      const pts = ROUTE_WAYPOINTS[activeInspectionTrip.routeId];
+      if (activeInspectionTrip.fromStopId === 'apu') {
+        return [...pts].reverse();
+      }
+      return pts;
+    }
+    return ROUTE_WAYPOINTS['lrt'] || [];
+  }, [activeInspectionTrip]);
 
   // Step 1 Handler: Driver selects a bus and is prompted for PIN 1234
   const handleSelectTripForPIN = (trip: BusTrip) => {
@@ -318,8 +338,11 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     setStatusPinError(null);
   };
 
+  const mapsKey = apiKey || (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string) || '';
+
   // ==========================================
-  // VIEW 1: Bus & Route Selection (BEFORE PIN)
+  // VIEW 1: Bus & Schedule Selection (BEFORE PIN)
+  // Dedicated to assigned corridor (No cross-route checking)
   // ==========================================
   if (!assignedTripId) {
     return (
@@ -359,42 +382,64 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
           </div>
         </div>
 
-        {/* Step 1 Instructions */}
-        <div className="my-3 p-3 rounded-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xs space-y-1">
-          <div className="flex items-center gap-2 text-xs font-bold text-zinc-900 dark:text-white">
-            <Navigation className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-            <span>Step 1: Choose Route & View Timetable</span>
+        {/* Dedicated Route Corridor Policy Notice */}
+        <div className="my-3 p-3 rounded-md bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/80 shadow-2xs space-y-1.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-black text-emerald-900 dark:text-emerald-200 uppercase tracking-wide">
+              <ArrowLeftRight className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span>Assigned Corridor: {assignedCorridorName}</span>
+            </div>
+            <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white uppercase">
+              Route Locked
+            </span>
           </div>
-          <p className="text-[11px] text-zinc-600 dark:text-zinc-400 leading-relaxed">
-            Click any route below to filter the timetable. You can browse all schedules freely without entering any code. After picking your timetable schedule, enter your 4-digit driver code (<strong>1234</strong>) to unlock the vehicle.
+          <p className="text-[11px] text-emerald-800 dark:text-emerald-300 leading-relaxed font-mono">
+            <strong>Single Corridor Policy:</strong> Each APU shuttle driver is assigned strictly to their designated route corridor and operates back-and-forth round trips between depart and destination (Bukit Jalil 57000). Cross-checking other routes or multi-destination driving is restricted.
           </p>
         </div>
 
-        {/* Route Preset Chips (Clickable Route Selection BEFORE entering code) */}
+        {/* Corridor Round-Trip Filter Chips (Back-and-Forth Only) */}
         <div className="mb-3 space-y-1.5">
           <label className="text-[10px] font-mono uppercase font-bold text-zinc-500 tracking-wider block">
-            Select Route Corridor:
+            Corridor Round-Trip Schedule Filter:
           </label>
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-            {routePresets.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => setSelectedRouteId(r.id)}
-                className={`px-2.5 py-1 rounded text-xs font-semibold whitespace-nowrap transition border ${
-                  selectedRouteId === r.id
-                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                    : 'bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
-                }`}
-              >
-                {r.label}
-              </button>
-            ))}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar font-mono text-xs">
+            <button
+              onClick={() => setDirectionFilter('all')}
+              className={`px-2.5 py-1 rounded text-xs font-semibold whitespace-nowrap transition border ${
+                directionFilter === 'all'
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                  : 'bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
+              }`}
+            >
+              All Round Trips ({driverAssignedTrips.length})
+            </button>
+            <button
+              onClick={() => setDirectionFilter('to_apu')}
+              className={`px-2.5 py-1 rounded text-xs font-semibold whitespace-nowrap transition border ${
+                directionFilter === 'to_apu'
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                  : 'bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
+              }`}
+            >
+              ➔ APU Campus (Outbound)
+            </button>
+            <button
+              onClick={() => setDirectionFilter('from_apu')}
+              className={`px-2.5 py-1 rounded text-xs font-semibold whitespace-nowrap transition border ${
+                directionFilter === 'from_apu'
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                  : 'bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
+              }`}
+            >
+              APU ➔ (Return)
+            </button>
           </div>
         </div>
 
-        {/* Timetable List: Separated into Available vs Expired/Unavailable Sections */}
+        {/* Timetable List: Strictly for Assigned Corridor */}
         <div className="flex-1 space-y-4">
-          {/* SECTION 1: Available Buses */}
+          {/* SECTION 1: Available Buses for Assigned Corridor */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider px-0.5">
               <div className="flex items-center gap-1.5">
@@ -405,12 +450,14 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
             </div>
 
             {availableSelectionTrips.length === 0 ? (
-              <div className="p-3 text-center text-xs text-zinc-500 bg-white dark:bg-zinc-900 rounded border border-zinc-200 dark:border-zinc-800">
-                No active operating buses on this route right now. See expired or upcoming schedules below.
+              <div className="p-3 text-center text-xs text-zinc-500 bg-white dark:bg-zinc-900 rounded border border-zinc-200 dark:border-zinc-800 font-mono">
+                No active operating buses on {assignedCorridorName} right now. See past or upcoming schedules below.
               </div>
             ) : (
               availableSelectionTrips.map((trip) => {
                 const tripBusStatus = getBusLifecycleStatus(currentTimeStr, trip.departureTime);
+                const isReturn = trip.fromStopId === 'apu';
+
                 return (
                   <button
                     key={trip.id}
@@ -426,6 +473,11 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                         <div className="flex items-center gap-1.5 font-mono text-[10px]">
                           <span className="font-bold text-zinc-800 dark:text-zinc-200">{formatTime12h(trip.departureTime)}</span>
                           <span className="text-zinc-500">· Cap: {trip.seatedCapacity ?? trip.totalSeats ?? 40} Seats</span>
+                          <span className={`text-[8px] font-bold px-1 rounded uppercase ${
+                            isReturn ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300' : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
+                          }`}>
+                            {isReturn ? 'Return' : 'Outbound'}
+                          </span>
                         </div>
                         <h4 className="text-xs font-bold text-zinc-900 dark:text-white truncate group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
                           {trip.routeName}
@@ -446,13 +498,13 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
             )}
           </div>
 
-          {/* SECTION 2: Expired & Unavailable Buses (Distinct Below Section in Gray) */}
+          {/* SECTION 2: Expired & Unavailable Buses (Gray Section) */}
           {unavailableSelectionTrips.length > 0 && (
             <div className="pt-3 border-t border-zinc-200 dark:border-zinc-800 space-y-2">
               <div className="flex items-center justify-between text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider px-0.5">
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-zinc-400 dark:bg-zinc-600" />
-                  <span>Expired & Unavailable Buses ({unavailableSelectionTrips.length})</span>
+                  <span>Past & Inactive {assignedCorridorName} Schedules ({unavailableSelectionTrips.length})</span>
                 </div>
                 <button
                   onClick={() => setIsSelectionUnavailableExpanded(!isSelectionUnavailableExpanded)}
@@ -571,15 +623,15 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
 
   // ==========================================
   // VIEW 2: Active Driver Operations Page
+  // Dedicated to assigned corridor round trips only
   // ==========================================
-  const assignedTrip = trips.find((t) => t.id === assignedTripId) || trips[0];
+  const assignedTrip = trips.find((t) => t.id === assignedTripId) || driverAssignedTrips[0] || trips[0];
   const tripBusLifecycleStatus = getBusLifecycleStatus(currentTimeStr, activeInspectionTrip.departureTime);
 
   // Generate rows for vertical layout:
-  // Capacity: e.g. 40 seats -> 10 rows of 4 seats (A, B | aisle | C, D)
-  const capacity = activeInspectionTrip?.seatedCapacity ?? activeInspectionTrip?.totalSeats ?? 40;
-  const numRows = capacity <= 2 ? 1 : Math.ceil(capacity / 4);
-  const cabinRows = Array.from({ length: numRows }, (_, i) => i + 1);
+  // Every APU shuttle bus standard cabin always displays the full 40 seats (10 rows x 4 seats: A, B | aisle | C, D)
+  const capacity = 40;
+  const cabinRows = Array.from({ length: 10 }, (_, i) => i + 1);
 
   return (
     <div className="flex-1 flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 overflow-y-auto transition-colors">
@@ -624,7 +676,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
           <button
             onClick={() => setAssignedTripId(null)}
             className="px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 hover:border-emerald-500 text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white text-[10px] font-mono font-semibold transition"
-            title="Choose another route or bus to drive"
+            title="Change schedule within your assigned route corridor"
           >
             Switch Bus
           </button>
@@ -638,68 +690,22 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
         </div>
       </div>
 
-      {/* Interactive Google Map bounded to Kuala Lumpur & Bukit Jalil corridor */}
-      <div className="relative w-full h-40 bg-zinc-100 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 overflow-hidden">
-        {apiKey ? (
-          <APIProvider apiKey={apiKey}>
-            <GoogleMap
-              defaultCenter={{ lat: 3.0587, lng: 101.6917 }}
-              defaultZoom={13}
-              minZoom={12}
-              maxZoom={18}
-              restriction={{
-                latLngBounds: klMapBounds,
-                strictBounds: true,
-              }}
-              mapId="driver-map"
-              className="w-full h-full"
-              disableDefaultUI
-            >
-              {APU_STOPS.slice(0, 5).map((stop) => (
-                <AdvancedMarker key={stop.id} position={stop.coords} title={stop.name}>
-                  <div className="p-1 rounded bg-white dark:bg-zinc-950 border border-emerald-500 text-[9px] font-mono text-emerald-600 dark:text-emerald-400 font-bold shadow-xs">
-                    {stop.shortCode}
-                  </div>
-                </AdvancedMarker>
-              ))}
-            </GoogleMap>
-          </APIProvider>
-        ) : (
-          /* High-Fidelity Vector Map fallback for local dev when no key is set */
-          <div className="w-full h-full relative bg-zinc-100 dark:bg-zinc-950 flex flex-col justify-between p-2.5 font-mono text-xs select-none">
-            <div className="flex items-center justify-between text-[10px]">
-              <span className="text-emerald-700 dark:text-emerald-400 font-bold flex items-center gap-1">
-                <MapPin className="w-3 h-3" />
-                <span>GPS Bound: Kuala Lumpur & Bukit Jalil Corridor</span>
-              </span>
-              <span className="text-zinc-500 font-mono text-[9px]">Strict Bounds: 101.64E - 101.75E</span>
-            </div>
+      {/* Corridor Restriction Indicator */}
+      <div className="px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900/80 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between text-[10px] font-mono">
+        <div className="flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-bold">
+          <ArrowLeftRight className="w-3 h-3" />
+          <span>Assigned: {assignedCorridorName} (Back-and-Forth Only)</span>
+        </div>
+        <span className="text-zinc-500 text-[9px]">Bukit Jalil 57000 Corridor</span>
+      </div>
 
-            <div className="flex items-center justify-around py-3">
-              <div className="flex flex-col items-center">
-                <div className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
-                <span className="text-[10px] text-zinc-800 dark:text-zinc-200 font-bold mt-1">LRT B.Jalil</span>
-                <span className="text-[8px] text-zinc-500">Bay 1</span>
-              </div>
-              <div className="h-0.5 w-16 bg-dashed border-b-2 border-emerald-500/60" />
-              <div className="flex flex-col items-center">
-                <Bus className="w-5 h-5 text-emerald-600 dark:text-emerald-400 animate-bounce" />
-                <span className="text-[9px] text-emerald-700 dark:text-emerald-300 font-bold">{assignedTrip.departureTime}</span>
-              </div>
-              <div className="h-0.5 w-16 bg-dashed border-b-2 border-emerald-500/60" />
-              <div className="flex flex-col items-center">
-                <div className="w-3 h-3 rounded-sm bg-blue-500" />
-                <span className="text-[10px] text-zinc-800 dark:text-zinc-200 font-bold mt-1">APU Campus</span>
-                <span className="text-[8px] text-zinc-500">Terminal</span>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between text-[9px] text-zinc-500 border-t border-zinc-200 dark:border-zinc-800/80 pt-1">
-              <span>Vehicle: {assignedTrip.routeName}</span>
-              <span>Simulated Time: {currentTimeStr} MYT</span>
-            </div>
-          </div>
-        )}
+      {/* Route Transit Map (Clean Maps + Route + Vehicle Graphic) */}
+      <div className="p-3 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50">
+        <DriverRouteMap
+          trip={activeInspectionTrip}
+          busStatus={tripBusLifecycleStatus}
+          theme={theme}
+        />
       </div>
 
       {/* ========================================================================= */}
@@ -818,7 +824,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
           </div>
         </div>
 
-        {/* Short, Sharp and Effective Notification on Passengers Who Haven't Got In */}
+        {/* Notification on Passengers Who Haven't Got In */}
         <div className="mt-2">
           {metrics.waitingOutsideCount > 0 ? (
             <div className="p-2 rounded bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900/60 flex items-center justify-between text-xs text-rose-800 dark:text-rose-200 font-mono">
@@ -898,118 +904,92 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
             </div>
           </div>
 
-          {/* Seat Rows: Vertical Front to Back with Center Aisle */}
+          {/* Seat Rows: Vertical Front to Back with Center Aisle (Full 40-Seat Bus Layout) */}
           <div className="space-y-1.5">
-            {capacity <= 2 ? (
-              /* Demo Bus A (Capacity 2) */
-              <div className="flex items-center justify-center gap-4 py-3">
-                {['1A', '1B'].map((seatId) => {
-                  const seatData = seatStatusMap.get(seatId);
-                  const isCheckedIn = seatData?.booking.status === 'CHECKED_IN';
-                  const isBoarded = seatData?.booking.status === 'BOARDED';
-                  const isReserved = seatData?.booking.status === 'RESERVED';
+            {cabinRows.map((row) => (
+              <div key={row} className="flex items-center justify-between gap-1">
+                {/* Left Column: A & B */}
+                <div className="flex items-center gap-1">
+                  {['A', 'B'].map((col) => {
+                    const seatId = `${row}${col}`;
+                    const seatData = seatStatusMap.get(seatId);
+                    const isCheckedIn = seatData?.booking.status === 'CHECKED_IN';
+                    const isBoarded = seatData?.booking.status === 'BOARDED';
+                    const isReserved = seatData?.booking.status === 'RESERVED';
 
-                  return (
-                    <button
-                      key={seatId}
-                      onClick={() => seatData && handleInitiateManualBoarding(seatData.booking, seatData.user)}
-                      className={`w-14 h-14 rounded text-xs font-mono font-bold flex flex-col items-center justify-center transition border ${
-                        isBoarded
-                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
-                          : isCheckedIn
-                          ? 'bg-rose-600 text-white border-rose-600 animate-pulse shadow-sm'
-                          : isReserved
-                          ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700'
-                          : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 border-zinc-200 dark:border-zinc-800'
-                      }`}
-                    >
-                      <span className="text-sm font-black">{seatId}</span>
-                      <span className="text-[8px] uppercase tracking-wider">
-                        {isBoarded ? 'Inside' : isCheckedIn ? 'Checked-in' : isReserved ? 'Reserved' : 'Empty'}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              /* Standard Bus (40 Seats: 10 rows of 4 seats) */
-              cabinRows.map((row) => (
-                <div key={row} className="flex items-center justify-between gap-1">
-                  {/* Left Column: A & B */}
-                  <div className="flex items-center gap-1">
-                    {['A', 'B'].map((col) => {
-                      const seatId = `${row}${col}`;
-                      const seatData = seatStatusMap.get(seatId);
-                      const isCheckedIn = seatData?.booking.status === 'CHECKED_IN';
-                      const isBoarded = seatData?.booking.status === 'BOARDED';
-                      const isReserved = seatData?.booking.status === 'RESERVED';
-
-                      return (
-                        <button
-                          key={seatId}
-                          onClick={() => seatData && handleInitiateManualBoarding(seatData.booking, seatData.user)}
-                          className={`w-8 h-8 rounded text-xs font-mono font-bold flex items-center justify-center transition border ${
-                            isBoarded
-                              ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                              : isCheckedIn
-                              ? 'bg-rose-600 text-white border-rose-600 animate-pulse shadow-xs'
-                              : isReserved
-                              ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700'
-                              : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
-                          }`}
-                          title={
-                            seatData
-                              ? `Seat ${seatId}: ${seatData.user?.name || 'Passenger'} (${seatData.booking.status})`
-                              : `Seat ${seatId}: Available`
-                          }
-                        >
-                          {seatId}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Center Aisle with Row Number */}
-                  <div className="w-5 text-center text-[9px] font-mono text-zinc-400 select-none">
-                    {row}
-                  </div>
-
-                  {/* Right Column: C & D */}
-                  <div className="flex items-center gap-1">
-                    {['C', 'D'].map((col) => {
-                      const seatId = `${row}${col}`;
-                      const seatData = seatStatusMap.get(seatId);
-                      const isCheckedIn = seatData?.booking.status === 'CHECKED_IN';
-                      const isBoarded = seatData?.booking.status === 'BOARDED';
-                      const isReserved = seatData?.booking.status === 'RESERVED';
-
-                      return (
-                        <button
-                          key={seatId}
-                          onClick={() => seatData && handleInitiateManualBoarding(seatData.booking, seatData.user)}
-                          className={`w-8 h-8 rounded text-xs font-mono font-bold flex items-center justify-center transition border ${
-                            isBoarded
-                              ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                              : isCheckedIn
-                              ? 'bg-rose-600 text-white border-rose-600 animate-pulse shadow-xs'
-                              : isReserved
-                              ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700'
-                              : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
-                          }`}
-                          title={
-                            seatData
-                              ? `Seat ${seatId}: ${seatData.user?.name || 'Passenger'} (${seatData.booking.status})`
-                              : `Seat ${seatId}: Available`
-                          }
-                        >
-                          {seatId}
-                        </button>
-                      );
-                    })}
-                  </div>
+                    return (
+                      <button
+                        key={seatId}
+                        onClick={() =>
+                          seatData
+                            ? handleInitiateManualBoarding(seatData.booking, seatData.user)
+                            : showToast(`Seat ${seatId} is Empty & Available`)
+                        }
+                        className={`w-8 h-8 rounded text-xs font-mono font-bold flex items-center justify-center transition border ${
+                          isBoarded
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                            : isCheckedIn
+                            ? 'bg-rose-600 text-white border-rose-600 animate-pulse shadow-xs'
+                            : isReserved
+                            ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700'
+                            : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
+                        }`}
+                        title={
+                          seatData
+                            ? `Seat ${seatId}: ${seatData.user?.name || 'Passenger'} (${seatData.booking.status})`
+                            : `Seat ${seatId}: Available / Empty`
+                        }
+                      >
+                        {seatId}
+                      </button>
+                    );
+                  })}
                 </div>
-              ))
-            )}
+
+                {/* Center Aisle with Row Number */}
+                <div className="w-5 text-center text-[9px] font-mono text-zinc-400 select-none">
+                  {row}
+                </div>
+
+                {/* Right Column: C & D */}
+                <div className="flex items-center gap-1">
+                  {['C', 'D'].map((col) => {
+                    const seatId = `${row}${col}`;
+                    const seatData = seatStatusMap.get(seatId);
+                    const isCheckedIn = seatData?.booking.status === 'CHECKED_IN';
+                    const isBoarded = seatData?.booking.status === 'BOARDED';
+                    const isReserved = seatData?.booking.status === 'RESERVED';
+
+                    return (
+                      <button
+                        key={seatId}
+                        onClick={() =>
+                          seatData
+                            ? handleInitiateManualBoarding(seatData.booking, seatData.user)
+                            : showToast(`Seat ${seatId} is Empty & Available`)
+                        }
+                        className={`w-8 h-8 rounded text-xs font-mono font-bold flex items-center justify-center transition border ${
+                          isBoarded
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                            : isCheckedIn
+                            ? 'bg-rose-600 text-white border-rose-600 animate-pulse shadow-xs'
+                            : isReserved
+                            ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700'
+                            : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
+                        }`}
+                        title={
+                          seatData
+                            ? `Seat ${seatId}: ${seatData.user?.name || 'Passenger'} (${seatData.booking.status})`
+                            : `Seat ${seatId}: Available / Empty`
+                        }
+                      >
+                        {seatId}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* VEHICLE REAR: EMERGENCY EXIT DOOR */}
@@ -1041,6 +1021,9 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                       <span className="w-6 h-6 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 font-mono font-bold flex items-center justify-center text-[10px]">
                         {b.seatId}
                       </span>
+                      {u?.avatar && (
+                        <img src={u.avatar} alt={u.name} className="w-6 h-6 rounded-full object-cover shrink-0" />
+                      )}
                       <div>
                         <div className="font-bold text-zinc-900 dark:text-white leading-tight">{u?.name || 'Passenger'}</div>
                         <div className="text-[10px] text-zinc-500 font-mono">
@@ -1077,26 +1060,32 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* TIMETABLE SCHEDULES BELOW MAP (SEPARATED INTO AVAILABLE & EXPIRED SECTIONS)*/}
+      {/* CORRIDOR TIMETABLE BELOW MAP: RESTRICTED TO ASSIGNED ROUTE ONLY           */}
       {/* ========================================================================= */}
       <div className="p-3 space-y-3 bg-white dark:bg-zinc-900/40">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono uppercase font-bold text-zinc-500">
-            APU Fleet Timetable (Select to View)
-          </span>
+          <div>
+            <span className="text-[10px] font-mono uppercase font-bold text-zinc-500 block">
+              {assignedCorridorName} Timetable
+            </span>
+            <span className="text-[9px] text-emerald-700 dark:text-emerald-400 font-mono">
+              Dedicated Corridor (Back & Forth Only)
+            </span>
+          </div>
           <span className="text-[10px] font-mono text-zinc-400">Current: {currentTimeStr} MYT</span>
         </div>
 
-        {/* SECTION 1: Active & Upcoming Trips */}
+        {/* SECTION 1: Active & Upcoming Trips for Assigned Corridor */}
         <div className="space-y-1.5">
           <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-bold uppercase block">
-            ● Active & Upcoming Bus Trips ({runningAndUpcomingTrips.length})
+            ● Active & Upcoming Corridor Trips ({runningAndUpcomingTrips.length})
           </span>
           <div className="space-y-1">
             {runningAndUpcomingTrips.map((trip) => {
               const tripBusStatus = getBusLifecycleStatus(currentTimeStr, trip.departureTime);
               const isSelected = activeInspectionTrip.id === trip.id;
               const isMyBus = assignedTripId === trip.id;
+              const isReturn = trip.fromStopId === 'apu';
 
               return (
                 <button
@@ -1113,6 +1102,11 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                     <div>
                       <div className="flex items-center gap-1 font-semibold leading-tight">
                         <span>{trip.routeName}</span>
+                        <span className={`text-[8px] font-bold px-1 rounded uppercase ${
+                          isReturn ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300' : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
+                        }`}>
+                          {isReturn ? 'Return' : 'Outbound'}
+                        </span>
                         {isMyBus && (
                           <span className="text-[9px] px-1 rounded bg-emerald-600 text-white font-mono">
                             Your Bus
@@ -1141,7 +1135,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
               onClick={() => setIsPassedExpanded(!isPassedExpanded)}
               className="w-full flex items-center justify-between text-[10px] font-mono text-zinc-500 dark:text-zinc-400 uppercase py-1"
             >
-              <span>Past Bus Schedules ({passedTrips.length} completed) - Gray Section</span>
+              <span>Past {assignedCorridorName} Schedules ({passedTrips.length} completed) - Gray Section</span>
               <span className="underline">{isPassedExpanded ? 'Collapse' : 'Expand'}</span>
             </button>
 

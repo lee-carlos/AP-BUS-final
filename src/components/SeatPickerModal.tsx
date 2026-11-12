@@ -27,8 +27,8 @@ export const SeatPickerModal: React.FC<SeatPickerModalProps> = ({
   const isTimePassed = minsUntil < 0;
   const isBookingAllowed = !isTimePassed && isNormalBookingOpen(currentTimeStr, trip.departureTime);
 
-  const capacity = trip.seatedCapacity ?? trip.totalSeats ?? 40;
-  const rows = capacity <= 2 ? [1] : Array.from({ length: Math.ceil(capacity / 4) }, (_, i) => i + 1);
+  const capacity = 40; // Full standard bus cabin layout (10 rows x 4 seats)
+  const rows = Array.from({ length: 10 }, (_, i) => i + 1);
 
   const isSeatBooked = (seatId: string) => trip.bookedSeatIds.includes(seatId);
 
@@ -124,96 +124,70 @@ export const SeatPickerModal: React.FC<SeatPickerModalProps> = ({
                   </div>
                 </div>
 
-                {/* Rows of Seats */}
+                {/* Rows of Seats: Full 40-Seat Bus Layout (10 rows x 4 seats) */}
                 <div className="space-y-1.5">
-                  {capacity <= 2 ? (
-                    <div className="flex items-center justify-center gap-3 py-3">
-                      {['1A', '1B'].map((seatId) => {
-                        const booked = isSeatBooked(seatId);
-                        const isSelected = selectedSeat === seatId;
-                        return (
-                          <button
-                            key={seatId}
-                            disabled={booked || !isBookingAllowed}
-                            onClick={() => handleSeatClick(seatId)}
-                            className={`w-12 h-12 rounded-sm text-xs font-mono font-bold flex flex-col items-center justify-center transition border ${
-                              isSelected
-                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs scale-102'
-                                : booked
-                                ? 'bg-zinc-200/60 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-400 opacity-60 cursor-not-allowed'
-                                : 'bg-white dark:bg-zinc-800/90 hover:bg-zinc-50 dark:hover:bg-zinc-700 border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 hover:border-emerald-500'
-                            }`}
-                          >
-                            <span>{seatId}</span>
-                            <span className="text-[8px] font-normal">{booked ? 'Taken' : 'Open'}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    rows.map((row) => (
-                      <div key={row} className="flex items-center justify-between gap-1">
-                        {/* Left Side: A & B */}
-                        <div className="flex items-center gap-1">
-                          {['A', 'B'].map((col) => {
-                            const seatId = `${row}${col}`;
-                            const booked = isSeatBooked(seatId);
-                            const isSelected = selectedSeat === seatId;
-                            return (
-                              <button
-                                key={seatId}
-                                disabled={booked || !isBookingAllowed}
-                                onClick={() => handleSeatClick(seatId)}
-                                className={`w-8 h-8 rounded-sm text-xs font-mono font-bold flex items-center justify-center transition border ${
-                                  isSelected
-                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                                    : booked
-                                    ? 'bg-zinc-200/50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-400 opacity-60 cursor-not-allowed'
-                                    : 'bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 hover:border-emerald-500'
-                                }`}
-                              >
-                                {seatId}
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {/* Center Aisle */}
-                        <div className="w-5 text-center text-[9px] font-mono text-zinc-400 select-none">
-                          {row}
-                        </div>
-
-                        {/* Right Side: C & D */}
-                        <div className="flex items-center gap-1">
-                          {['C', 'D'].map((col) => {
-                            const seatId = `${row}${col}`;
-                            const booked = isSeatBooked(seatId);
-                            const isSelected = selectedSeat === seatId;
-                            return (
-                              <button
-                                key={seatId}
-                                disabled={booked || !isBookingAllowed}
-                                onClick={() => handleSeatClick(seatId)}
-                                className={`w-8 h-8 rounded-sm text-xs font-mono font-bold flex items-center justify-center transition border ${
-                                  isSelected
-                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                                    : booked
-                                    ? 'bg-zinc-200/50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-400 opacity-60 cursor-not-allowed'
-                                    : 'bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 hover:border-emerald-500'
-                                }`}
-                              >
-                                {seatId}
-                              </button>
-                            );
-                          })}
-                        </div>
+                  {rows.map((row) => (
+                    <div key={row} className="flex items-center justify-between gap-1">
+                      {/* Left Side: A & B */}
+                      <div className="flex items-center gap-1">
+                        {['A', 'B'].map((col) => {
+                          const seatId = `${row}${col}`;
+                          const booked = isSeatBooked(seatId);
+                          const isSelected = selectedSeat === seatId;
+                          return (
+                            <button
+                              key={seatId}
+                              disabled={booked || !isBookingAllowed}
+                              onClick={() => handleSeatClick(seatId)}
+                              className={`w-8 h-8 rounded-sm text-xs font-mono font-bold flex items-center justify-center transition border ${
+                                isSelected
+                                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                  : booked
+                                  ? 'bg-zinc-200/50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-400 opacity-60 cursor-not-allowed'
+                                  : 'bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 hover:border-emerald-500'
+                              }`}
+                            >
+                              {seatId}
+                            </button>
+                          );
+                        })}
                       </div>
-                    ))
-                  )}
+
+                      {/* Center Aisle */}
+                      <div className="w-5 text-center text-[9px] font-mono text-zinc-400 select-none">
+                        {row}
+                      </div>
+
+                      {/* Right Side: C & D */}
+                      <div className="flex items-center gap-1">
+                        {['C', 'D'].map((col) => {
+                          const seatId = `${row}${col}`;
+                          const booked = isSeatBooked(seatId);
+                          const isSelected = selectedSeat === seatId;
+                          return (
+                            <button
+                              key={seatId}
+                              disabled={booked || !isBookingAllowed}
+                              onClick={() => handleSeatClick(seatId)}
+                              className={`w-8 h-8 rounded-sm text-xs font-mono font-bold flex items-center justify-center transition border ${
+                                isSelected
+                                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                  : booked
+                                  ? 'bg-zinc-200/50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-400 opacity-60 cursor-not-allowed'
+                                  : 'bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 hover:border-emerald-500'
+                              }`}
+                            >
+                              {seatId}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="mt-2.5 pt-1.5 border-t border-zinc-200 dark:border-zinc-800 text-center text-[9px] text-zinc-400 uppercase tracking-widest font-mono">
-                  Rear Deck · {capacity} Seated
+                  [ 🚨 REAR EMERGENCY EXIT DOOR · 40 SEATS FULL CABIN ]
                 </div>
               </div>
             </div>

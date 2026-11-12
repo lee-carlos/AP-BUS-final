@@ -132,6 +132,8 @@ export interface DemoUser {
   apCardNumber?: string;
   courseDepartment?: string;
   phone?: string;
+  assignedRouteId?: string;
+  assignedCorridorName?: string;
 }
 
 export interface SeatAlertSubscription {
