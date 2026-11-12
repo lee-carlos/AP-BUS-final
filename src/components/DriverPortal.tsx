@@ -422,7 +422,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                   : 'bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
               }`}
             >
-              ➔ APU Campus (Outbound)
+              ➔ APU Campus
             </button>
             <button
               onClick={() => setDirectionFilter('from_apu')}
@@ -432,7 +432,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                   : 'bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
               }`}
             >
-              APU ➔ (Return)
+              APU ➔ Corridor
             </button>
           </div>
         </div>
@@ -456,7 +456,6 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
             ) : (
               availableSelectionTrips.map((trip) => {
                 const tripBusStatus = getBusLifecycleStatus(currentTimeStr, trip.departureTime);
-                const isReturn = trip.fromStopId === 'apu';
 
                 return (
                   <button
@@ -473,11 +472,6 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                         <div className="flex items-center gap-1.5 font-mono text-[10px]">
                           <span className="font-bold text-zinc-800 dark:text-zinc-200">{formatTime12h(trip.departureTime)}</span>
                           <span className="text-zinc-500">· Cap: {trip.seatedCapacity ?? trip.totalSeats ?? 40} Seats</span>
-                          <span className={`text-[8px] font-bold px-1 rounded uppercase ${
-                            isReturn ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300' : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
-                          }`}>
-                            {isReturn ? 'Return' : 'Outbound'}
-                          </span>
                         </div>
                         <h4 className="text-xs font-bold text-zinc-900 dark:text-white truncate group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
                           {trip.routeName}
@@ -705,6 +699,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
           trip={activeInspectionTrip}
           busStatus={tripBusLifecycleStatus}
           theme={theme}
+          apiKey={mapsKey}
         />
       </div>
 
@@ -1102,11 +1097,6 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                     <div>
                       <div className="flex items-center gap-1 font-semibold leading-tight">
                         <span>{trip.routeName}</span>
-                        <span className={`text-[8px] font-bold px-1 rounded uppercase ${
-                          isReturn ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300' : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
-                        }`}>
-                          {isReturn ? 'Return' : 'Outbound'}
-                        </span>
                         {isMyBus && (
                           <span className="text-[9px] px-1 rounded bg-emerald-600 text-white font-mono">
                             Your Bus

@@ -385,7 +385,7 @@ export const BusMap: React.FC<BusMapProps> = ({
       {/* Main Map Rendering Area (Scrollable around all 14 points) */}
       <div className="w-full h-72 sm:h-84 relative">
         {mapsKey && !mapError ? (
-          <APIProvider apiKey={mapsKey}>
+          <APIProvider apiKey={mapsKey} region="MY" language="en">
             <Map
               defaultCenter={defaultCenter}
               defaultZoom={13}

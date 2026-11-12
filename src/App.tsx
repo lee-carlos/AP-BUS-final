@@ -1520,14 +1520,14 @@ export default function App() {
     >
       {/* Client-Side Quota Defense Banner */}
       {quotaExceeded && (
-        <div className="bg-amber-50 dark:bg-amber-950/80 border-b border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 px-3 py-2 text-xs text-center sticky top-0 z-50">
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm">
           <span>
             Google Maps Platform quota reached. If you are the app owner, visit{' '}
             <a
               href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
               target="_blank"
               rel="noopener noreferrer"
-              className="underline font-semibold hover:text-amber-700 dark:hover:text-amber-100"
+              className="underline font-semibold text-amber-950 hover:text-amber-800"
             >
               maps developer site
             </a>{' '}
@@ -1634,6 +1634,7 @@ export default function App() {
             bookings={currentUserBookings}
             trips={trips}
             currentTimeStr={simulatedTimeStr}
+            apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY}
           />
 
           {/* Booked Buses Cards with Penalty Status, Check-In & Boarding Pass */}
