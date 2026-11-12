@@ -1,8 +1,8 @@
 # AP-BUS
 
 # Team Information
-| Name | Github Account |
-|======|================|
+| Team Name | Github Account |
+|------|----------------|
 | Carlos Lee | @lee-carlos |
 | Aska Aidan | @Vioclast|
 | Jevon Cliven Ramaputra | @jevoncliven |
