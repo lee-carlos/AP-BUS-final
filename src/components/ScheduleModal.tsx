@@ -44,7 +44,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
   const [activeFilter, setActiveFilter] = useState<string>(initialRouteFilter || 'all');
   const [directionFilter, setDirectionFilter] = useState<'all' | 'to_apu' | 'from_apu'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isUnavailableExpanded, setIsUnavailableExpanded] = useState<boolean>(true);
+  const [isExpiredExpanded, setIsExpiredExpanded] = useState<boolean>(true);
 
   // Check active booking limit: 2 active bookings maximum
   const activeBookingsCount = currentBookings.filter(
@@ -93,28 +93,27 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
     });
   }, [trips, activeFilter, directionFilter, searchQuery]);
 
-  // Separate Available buses from Expired and Unavailable buses per prompt requirements
-  const { availableTrips, unavailableTrips } = useMemo(() => {
+  // Separate Available & Upcoming (including Not Available Now) from Expired buses only
+  const { availableTrips, expiredTrips } = useMemo(() => {
     const available: BusTrip[] = [];
-    const unavailable: BusTrip[] = [];
+    const expired: BusTrip[] = [];
 
     filteredTrips.forEach((t) => {
       const status = getBusLifecycleStatus(currentTimeStr, t.departureTime);
-      const minsUntil = getMinutesUntilDeparture(currentTimeStr, t.departureTime);
-      if (status === 'Expired' || status === 'Not Available Now' || minsUntil < 0) {
-        unavailable.push(t);
+      if (status === 'Expired') {
+        expired.push(t);
       } else {
         available.push(t);
       }
     });
 
     available.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
-    unavailable.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
+    expired.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
 
-    return { availableTrips: available, unavailableTrips: unavailable };
+    return { availableTrips: available, expiredTrips: expired };
   }, [filteredTrips, currentTimeStr]);
 
-  const renderTripCard = (trip: BusTrip, isUnavailableSection = false) => {
+  const renderTripCard = (trip: BusTrip, isExpiredSection = false) => {
     const minsUntil = getMinutesUntilDeparture(currentTimeStr, trip.departureTime);
     const isTimePassed = minsUntil < 0;
     const full = isBusFull(trip);
@@ -140,7 +139,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
       <div
         key={trip.id}
         className={`p-3 rounded-md border transition relative ${
-          isUnavailableSection
+          isExpiredSection
             ? 'bg-zinc-100/70 dark:bg-zinc-950/40 border-zinc-200 dark:border-zinc-800/60 opacity-60 grayscale'
             : bookedByCurrentUser
             ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-400 dark:border-emerald-800/60 shadow-2xs'
@@ -155,8 +154,8 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
           {/* Left: Time and Route */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 font-mono flex-wrap">
-              <Clock className={`w-3 h-3 ${isUnavailableSection || isTurnedGrayByLimit ? 'text-zinc-400' : 'text-emerald-600 dark:text-emerald-400'}`} />
-              <span className={`text-xs font-extrabold ${isUnavailableSection ? 'text-zinc-500 line-through' : isTurnedGrayByLimit ? 'text-zinc-500' : 'text-zinc-900 dark:text-white'}`}>
+              <Clock className={`w-3 h-3 ${isExpiredSection || isTurnedGrayByLimit ? 'text-zinc-400' : 'text-emerald-600 dark:text-emerald-400'}`} />
+              <span className={`text-xs font-extrabold ${isExpiredSection ? 'text-zinc-500 line-through' : isTurnedGrayByLimit ? 'text-zinc-500' : 'text-zinc-900 dark:text-white'}`}>
                 {formatTime12h(trip.departureTime)}
               </span>
               <span className="text-[10px] text-zinc-400">({trip.departureTime})</span>
@@ -189,22 +188,22 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
                   Limit 2/2 Reached
                 </span>
               )}
-              {hasActiveRouteBooking && !bookedByCurrentUser && !isTurnedGrayByLimit && !isUnavailableSection && (
+              {hasActiveRouteBooking && !bookedByCurrentUser && !isTurnedGrayByLimit && !isExpiredSection && (
                 <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-xs bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
                   Route Booked (1/day)
                 </span>
               )}
             </div>
 
-            <h4 className={`text-xs font-bold mt-1 truncate ${isUnavailableSection ? 'text-zinc-500' : isTurnedGrayByLimit ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-800 dark:text-zinc-200'}`}>
+            <h4 className={`text-xs font-bold mt-1 truncate ${isExpiredSection ? 'text-zinc-500' : isTurnedGrayByLimit ? 'text-zinc-500 dark:text-zinc-400' : 'text-zinc-800 dark:text-zinc-200'}`}>
               {trip.routeName}
             </h4>
 
             {/* Capacity / Status Indicator */}
             <div className="flex items-center gap-2 mt-1.5 text-[10px] text-zinc-500">
-              {isUnavailableSection ? (
+              {isExpiredSection ? (
                 <span className="text-zinc-500 font-semibold font-mono flex items-center gap-1">
-                  ● {isTimePassed ? 'Schedule Passed' : 'Not Available Now'}
+                  ● Schedule Expired
                 </span>
               ) : (
                 <span className="flex items-center gap-1">
@@ -219,7 +218,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
                 <span className="text-emerald-700 dark:text-emerald-400 font-semibold flex items-center gap-0.5">
                   <CheckCircle className="w-3 h-3" /> Booked (Seat {existingBooking.seatId})
                 </span>
-              ) : !isUnavailableSection && hasActiveRouteBooking ? (
+              ) : !isExpiredSection && hasActiveRouteBooking ? (
                 <span className="text-amber-700 dark:text-amber-400 font-medium">
                   Active on Route Today
                 </span>
@@ -233,7 +232,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
 
           {/* Right Action Buttons */}
           <div className="flex items-center gap-1 shrink-0 self-center">
-            {!isUnavailableSection && !isTurnedGrayByLimit && (
+            {!isExpiredSection && !isTurnedGrayByLimit && (
               <button
                 onClick={() => onToggleWaitlist(trip.id)}
                 className={`p-1.5 rounded-sm border transition ${
@@ -260,9 +259,13 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
                 <Trash2 className="w-3 h-3" />
                 <span>Cancel</span>
               </button>
-            ) : isUnavailableSection ? (
+            ) : isExpiredSection ? (
               <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider py-1 px-2 rounded-xs bg-zinc-200/50 dark:bg-zinc-800/40">
-                {isTimePassed ? 'Passed' : 'Unavailable'}
+                Expired
+              </span>
+            ) : isTimePassed ? (
+              <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider py-1 px-2 rounded-xs bg-zinc-200/70 dark:bg-zinc-800/60 border border-zinc-300 dark:border-zinc-700">
+                {tripBusStatus}
               </span>
             ) : isTurnedGrayByLimit ? (
               <button
@@ -398,15 +401,15 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
           ))}
         </div>
 
-        {/* Vertical List of Schedules: Available buses first, expired and unavailable buses in separate below section */}
+        {/* Vertical List of Schedules: Available & Upcoming buses (including Not Available Now) first, Expired buses only in separate below section */}
         <div className="flex-1 overflow-y-auto p-3 space-y-4">
-          {availableTrips.length === 0 && unavailableTrips.length === 0 ? (
+          {availableTrips.length === 0 && expiredTrips.length === 0 ? (
             <div className="text-center py-10 text-zinc-400 text-xs">
               No bus schedules found matching this search or direction filter.
             </div>
           ) : (
             <>
-              {/* SECTION 1: Available Buses */}
+              {/* SECTION 1: Available & Upcoming Buses (includes Not Available Now) */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider px-0.5">
                   <div className="flex items-center gap-1.5">
@@ -418,32 +421,32 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
 
                 {availableTrips.length === 0 ? (
                   <div className="p-3 text-center text-xs text-zinc-500 bg-zinc-50 dark:bg-zinc-950/40 rounded border border-zinc-200 dark:border-zinc-800">
-                    No operating buses currently in this window. See upcoming or expired trips below.
+                    No active or upcoming buses remaining for this filter. See expired trips below.
                   </div>
                 ) : (
                   availableTrips.map((trip) => renderTripCard(trip, false))
                 )}
               </div>
 
-              {/* SECTION 2: Expired & Unavailable Buses (Distinct Below Section) */}
-              {unavailableTrips.length > 0 && (
+              {/* SECTION 2: Expired Buses Only (Distinct Below Section) */}
+              {expiredTrips.length > 0 && (
                 <div className="pt-3 border-t border-zinc-200 dark:border-zinc-800 space-y-2">
                   <div className="flex items-center justify-between text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider px-0.5">
                     <div className="flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-zinc-400 dark:bg-zinc-600" />
-                      <span>Expired & Unavailable Buses ({unavailableTrips.length})</span>
+                      <span>Expired Buses ({expiredTrips.length})</span>
                     </div>
                     <button
-                      onClick={() => setIsUnavailableExpanded(!isUnavailableExpanded)}
+                      onClick={() => setIsExpiredExpanded(!isExpiredExpanded)}
                       className="text-[10px] font-mono text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 underline"
                     >
-                      {isUnavailableExpanded ? 'Collapse' : 'Expand'}
+                      {isExpiredExpanded ? 'Collapse' : 'Expand'}
                     </button>
                   </div>
 
-                  {isUnavailableExpanded && (
+                  {isExpiredExpanded && (
                     <div className="space-y-2">
-                      {unavailableTrips.map((trip) => renderTripCard(trip, true))}
+                      {expiredTrips.map((trip) => renderTripCard(trip, true))}
                     </div>
                   )}
                 </div>

@@ -107,8 +107,14 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
 
   // Inspector trip (the trip the driver is inspecting seats/manifest for)
   const [selectedScheduleTripId, setSelectedScheduleTripId] = useState<string>(() => {
-    const firstAvailable = driverAssignedTrips.find((t) => t.id === 'demo-a-0800') || driverAssignedTrips[0];
-    return firstAvailable ? firstAvailable.id : 'demo-a-0800';
+    const active = driverAssignedTrips.find((t) => {
+      const st = getBusLifecycleStatus(currentTimeStr, t.departureTime);
+      return st !== 'Not Available Now' && st !== 'Expired';
+    });
+    const fallbackPassed = driverAssignedTrips.find(
+      (t) => getBusLifecycleStatus(currentTimeStr, t.departureTime) === 'Expired'
+    );
+    return (active || fallbackPassed || driverAssignedTrips[0])?.id || 'demo-a-0800';
   });
 
   // Manual boarding QR fallback confirmation modal
@@ -136,9 +142,9 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   // Status can only be marked as Arrived or Depart if in range AND not on the highway
   const canMarkStatus = driverIsInRange && !isHighway;
 
-  // Collapsible toggle for expired/unavailable buses in bottom timetable
-  const [isPassedExpanded, setIsPassedExpanded] = useState<boolean>(false);
-  const [isSelectionUnavailableExpanded, setIsSelectionUnavailableExpanded] = useState<boolean>(false);
+  // Collapsible toggle for unavailable (Not Available Now) buses
+  const [isUnavailableTimetableExpanded, setIsUnavailableTimetableExpanded] = useState<boolean>(true);
+  const [isSelectionUnavailableExpanded, setIsSelectionUnavailableExpanded] = useState<boolean>(true);
 
   // Success toast notice
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -156,47 +162,62 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     east: 101.745,
   }), []);
 
-  // Separate Available vs Expired/Unavailable trips for Step 1
-  const { availableSelectionTrips, unavailableSelectionTrips } = useMemo(() => {
-    const available: BusTrip[] = [];
-    const unavailable: BusTrip[] = [];
+  // Driver Step 1: 2 Sections
+  // - Section 1 (Green side / Operable): Currently active/driven buses + Already passed buses (gray, manual-checkable)
+  // - Section 2 (Unavailable / Locked): Upcoming buses that haven't reached time yet ('Not Available Now')
+  const { operableSelectionTrips, unavailableSelectionTrips } = useMemo(() => {
+    const active: BusTrip[] = [];
+    const passed: BusTrip[] = [];
+    const notAvailableYet: BusTrip[] = [];
 
     filteredCorridorTrips.forEach((t) => {
       const status = getBusLifecycleStatus(currentTimeStr, t.departureTime);
-      const minsUntil = getMinutesUntilDeparture(currentTimeStr, t.departureTime);
-      if (status === 'Expired' || status === 'Not Available Now' || minsUntil < 0) {
-        unavailable.push(t);
+      if (status === 'Not Available Now') {
+        notAvailableYet.push(t);
+      } else if (status === 'Expired') {
+        passed.push(t);
       } else {
-        available.push(t);
+        active.push(t);
       }
     });
 
-    available.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
-    unavailable.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
+    active.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
+    passed.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
+    notAvailableYet.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
 
-    return { availableSelectionTrips: available, unavailableSelectionTrips: unavailable };
+    return {
+      operableSelectionTrips: [...active, ...passed],
+      unavailableSelectionTrips: notAvailableYet,
+    };
   }, [filteredCorridorTrips, currentTimeStr]);
 
-  // Sorted schedules for the bottom timetable on the driver page:
-  // STRICTLY FILTERED to the assigned corridor (no cross-route checking permitted)
-  const { runningAndUpcomingTrips, passedTrips } = useMemo(() => {
-    const upcoming: BusTrip[] = [];
+  // Driver Step 2 Bottom Timetable: Same 2 Sections strictly for assigned corridor
+  // - Section 1 (Green side / Operable): Active/currently driven + Passed (gray, manual-checkable)
+  // - Section 2 (Unavailable / Locked): 'Not Available Now' (cannot be clicked or modified)
+  const { operableTimetableTrips, unavailableTimetableTrips } = useMemo(() => {
+    const active: BusTrip[] = [];
     const passed: BusTrip[] = [];
+    const notAvailableYet: BusTrip[] = [];
 
     driverAssignedTrips.forEach((t) => {
       const status = getBusLifecycleStatus(currentTimeStr, t.departureTime);
-      const minsUntil = getMinutesUntilDeparture(currentTimeStr, t.departureTime);
-      if (status === 'Expired' || minsUntil < 0) {
+      if (status === 'Not Available Now') {
+        notAvailableYet.push(t);
+      } else if (status === 'Expired') {
         passed.push(t);
       } else {
-        upcoming.push(t);
+        active.push(t);
       }
     });
 
-    upcoming.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
+    active.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
     passed.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
+    notAvailableYet.sort((a, b) => a.departureTime.localeCompare(b.departureTime));
 
-    return { runningAndUpcomingTrips: upcoming, passedTrips: passed };
+    return {
+      operableTimetableTrips: [...active, ...passed],
+      unavailableTimetableTrips: notAvailableYet,
+    };
   }, [driverAssignedTrips, currentTimeStr]);
 
   // Current trip under driver inspection (must be within assigned corridor)
@@ -247,7 +268,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   const seatStatusMap = useMemo(() => {
     const map = new Map<string, { booking: Booking; user?: DemoUser }>();
     activeTripBookings.forEach((b) => {
-      if (b.status === 'RESERVED' || b.status === 'CHECKED_IN' || b.status === 'BOARDED') {
+      if (b.status === 'RESERVED' || b.status === 'CHECKED_IN' || b.status === 'BOARDED' || b.status === 'NO_SHOW') {
         const u = users.find((usr) => usr.id === b.userId);
         map.set(b.seatId, { booking: b, user: u });
       }
@@ -450,53 +471,88 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
           </div>
         </div>
 
-        {/* Timetable List: Strictly for Assigned Corridor */}
+        {/* Timetable List: Strictly for Assigned Corridor (2 Sections) */}
         <div className="flex-1 space-y-4">
-          {/* SECTION 1: Available Buses for Assigned Corridor */}
+          {/* SECTION 1 (Green Side): Active/Driven Buses + Already Passed Buses (Gray, Manual Checkable) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-wider px-0.5">
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>Available Bus Schedules ({availableSelectionTrips.length})</span>
+                <span>Operable Buses ({operableSelectionTrips.length})</span>
               </div>
-              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">Running & Upcoming</span>
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">
+                Active & Passed (Manual Check)
+              </span>
             </div>
 
-            {availableSelectionTrips.length === 0 ? (
+            {operableSelectionTrips.length === 0 ? (
               <div className="p-3 text-center text-xs text-zinc-500 bg-white dark:bg-zinc-900 rounded border border-zinc-200 dark:border-zinc-800 font-mono">
-                No active operating buses on {assignedCorridorName} right now. See past or upcoming schedules below.
+                No active or passed buses on {assignedCorridorName} yet. Upcoming buses are locked below until their window opens.
               </div>
             ) : (
-              availableSelectionTrips.map((trip) => {
+              operableSelectionTrips.map((trip) => {
                 const tripBusStatus = getBusLifecycleStatus(currentTimeStr, trip.departureTime);
+                const isPassed = tripBusStatus === 'Expired';
 
                 return (
                   <button
                     key={trip.id}
                     onClick={() => handleSelectTripForPIN(trip)}
-                    className="w-full text-left p-3 rounded-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:border-emerald-500 dark:hover:border-emerald-500/80 transition shadow-2xs group flex items-center justify-between gap-3"
+                    className={`w-full text-left p-3 rounded-md border transition shadow-2xs group flex items-center justify-between gap-3 ${
+                      isPassed
+                        ? 'bg-zinc-100 dark:bg-zinc-900/70 border-zinc-300 dark:border-zinc-700 hover:border-zinc-500 dark:hover:border-zinc-500 text-zinc-600 dark:text-zinc-400'
+                        : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 hover:border-emerald-500 dark:hover:border-emerald-500/80'
+                    }`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex flex-col items-center justify-center shrink-0">
-                        <Clock className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                        <span className="text-[10px] font-mono font-bold text-zinc-800 dark:text-zinc-200">{trip.departureTime}</span>
+                      <div
+                        className={`w-10 h-10 rounded border flex flex-col items-center justify-center shrink-0 ${
+                          isPassed
+                            ? 'bg-zinc-200 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700'
+                            : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800'
+                        }`}
+                      >
+                        <Clock className={`w-3.5 h-3.5 ${isPassed ? 'text-zinc-500' : 'text-emerald-600 dark:text-emerald-400'}`} />
+                        <span className={`text-[10px] font-mono font-bold ${isPassed ? 'text-zinc-600 dark:text-zinc-400' : 'text-zinc-800 dark:text-zinc-200'}`}>
+                          {trip.departureTime}
+                        </span>
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 font-mono text-[10px]">
-                          <span className="font-bold text-zinc-800 dark:text-zinc-200">{formatTime12h(trip.departureTime)}</span>
+                          <span className={`font-bold ${isPassed ? 'text-zinc-600 dark:text-zinc-400' : 'text-zinc-800 dark:text-zinc-200'}`}>
+                            {formatTime12h(trip.departureTime)}
+                          </span>
                           <span className="text-zinc-500">· Cap: {trip.seatedCapacity ?? trip.totalSeats ?? 40} Seats</span>
+                          {isPassed && (
+                            <span className="text-[9px] px-1 py-0.2 rounded-xs bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700 font-bold uppercase">
+                              Passed
+                            </span>
+                          )}
                         </div>
-                        <h4 className="text-xs font-bold text-zinc-900 dark:text-white truncate group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
+                        <h4
+                          className={`text-xs font-bold truncate ${
+                            isPassed
+                              ? 'text-zinc-700 dark:text-zinc-300'
+                              : 'text-zinc-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400'
+                          }`}
+                        >
                           {trip.routeName}
                         </h4>
                         <div className="text-[10px] font-mono text-zinc-500">
-                          Status: <strong className="text-emerald-700 dark:text-emerald-400">{tripBusStatus}</strong>
+                          Status:{' '}
+                          <strong className={isPassed ? 'text-zinc-600 dark:text-zinc-400' : 'text-emerald-700 dark:text-emerald-400'}>
+                            {tripBusStatus}
+                          </strong>
                         </div>
                       </div>
                     </div>
 
-                    <div className="shrink-0 flex items-center gap-1 text-xs font-mono font-bold text-emerald-700 dark:text-emerald-400 group-hover:translate-x-0.5 transition-transform">
-                      <span>Select & Drive</span>
+                    <div
+                      className={`shrink-0 flex items-center gap-1 text-xs font-mono font-bold group-hover:translate-x-0.5 transition-transform ${
+                        isPassed ? 'text-zinc-600 dark:text-zinc-300' : 'text-emerald-700 dark:text-emerald-400'
+                      }`}
+                    >
+                      <span>{isPassed ? 'Manual Check' : 'Select & Drive'}</span>
                       <ChevronRight className="w-3.5 h-3.5" />
                     </div>
                   </button>
@@ -505,13 +561,13 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
             )}
           </div>
 
-          {/* SECTION 2: Expired & Unavailable Buses (Gray Section) */}
+          {/* SECTION 2 (Unavailable / Locked): Upcoming Buses Not Yet Reached Time ('Not Available Now') */}
           {unavailableSelectionTrips.length > 0 && (
             <div className="pt-3 border-t border-zinc-200 dark:border-zinc-800 space-y-2">
               <div className="flex items-center justify-between text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider px-0.5">
                 <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-zinc-400 dark:bg-zinc-600" />
-                  <span>Past & Inactive {assignedCorridorName} Schedules ({unavailableSelectionTrips.length})</span>
+                  <Lock className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500" />
+                  <span>Unavailable Buses — Not Available Now ({unavailableSelectionTrips.length})</span>
                 </div>
                 <button
                   onClick={() => setIsSelectionUnavailableExpanded(!isSelectionUnavailableExpanded)}
@@ -526,10 +582,11 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                   {unavailableSelectionTrips.map((trip) => {
                     const tripBusStatus = getBusLifecycleStatus(currentTimeStr, trip.departureTime);
                     return (
-                      <button
+                      <div
                         key={trip.id}
-                        onClick={() => handleSelectTripForPIN(trip)}
-                        className="w-full text-left p-2.5 rounded-md bg-zinc-100/70 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800/60 opacity-60 grayscale hover:opacity-100 hover:grayscale-0 transition flex items-center justify-between gap-3"
+                        aria-disabled="true"
+                        className="w-full text-left p-2.5 rounded-md bg-zinc-100/70 dark:bg-zinc-950/40 border border-zinc-200 dark:border-zinc-800/60 opacity-55 grayscale cursor-not-allowed select-none flex items-center justify-between gap-3"
+                        title="Locked: Bus departure window has not opened yet (Not Available Now)."
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <div className="w-8 h-8 rounded bg-zinc-200 dark:bg-zinc-800 flex flex-col items-center justify-center shrink-0">
@@ -539,7 +596,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                             <div className="text-[10px] text-zinc-500 font-mono">
                               {formatTime12h(trip.departureTime)} · Cap: {trip.seatedCapacity ?? trip.totalSeats ?? 40}
                             </div>
-                            <h4 className="text-xs font-bold text-zinc-700 dark:text-zinc-300 truncate">
+                            <h4 className="text-xs font-bold text-zinc-600 dark:text-zinc-400 truncate">
                               {trip.routeName}
                             </h4>
                             <div className="text-[9px] font-mono text-zinc-500">
@@ -548,10 +605,11 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                           </div>
                         </div>
 
-                        <div className="shrink-0 text-[10px] font-mono text-zinc-500">
-                          Inspect & Drive
+                        <div className="shrink-0 flex items-center gap-1 text-[10px] font-mono text-zinc-400 uppercase">
+                          <Lock className="w-3 h-3" />
+                          <span>Locked</span>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -983,7 +1041,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                   {['A', 'B'].map((col) => {
                     const seatId = `${row}${col}`;
                     const seatData = seatStatusMap.get(seatId);
-                    const isCheckedIn = seatData?.booking.status === 'CHECKED_IN';
+                    const isCheckedIn = seatData?.booking.status === 'CHECKED_IN' || seatData?.booking.status === 'NO_SHOW';
                     const isBoarded = seatData?.booking.status === 'BOARDED';
                     const isReserved = seatData?.booking.status === 'RESERVED';
 
@@ -1026,7 +1084,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                   {['C', 'D'].map((col) => {
                     const seatId = `${row}${col}`;
                     const seatData = seatStatusMap.get(seatId);
-                    const isCheckedIn = seatData?.booking.status === 'CHECKED_IN';
+                    const isCheckedIn = seatData?.booking.status === 'CHECKED_IN' || seatData?.booking.status === 'NO_SHOW';
                     const isBoarded = seatData?.booking.status === 'BOARDED';
                     const isReserved = seatData?.booking.status === 'RESERVED';
 
@@ -1103,13 +1161,13 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                     </div>
 
                     <div>
-                      {b.status === 'CHECKED_IN' ? (
+                      {b.status === 'CHECKED_IN' || b.status === 'NO_SHOW' ? (
                         <button
                           onClick={() => handleInitiateManualBoarding(b, u)}
                           className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-mono font-bold shadow-2xs animate-pulse"
-                          title="QR code not working? Manually confirm attendance with driver PIN (1234)."
+                          title="QR code not working or passed trip? Manually confirm attendance with driver PIN (1234)."
                         >
-                          Confirm Inside (Enter 1234)
+                          {b.status === 'NO_SHOW' ? 'Manual Check (1234)' : 'Confirm Inside (Enter 1234)'}
                         </button>
                       ) : b.status === 'BOARDED' ? (
                         <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-bold px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800">
@@ -1145,30 +1203,36 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
           <span className="text-[10px] font-mono text-zinc-400">Current: {currentTimeStr} MYT</span>
         </div>
 
-        {/* SECTION 1: Active & Upcoming Trips for Assigned Corridor */}
+        {/* SECTION 1 (Green Side): Active/Driven + Passed (Gray, Manual Checkable) Corridor Trips */}
         <div className="space-y-1.5">
           <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-bold uppercase block">
-            ● Active & Upcoming Corridor Trips ({runningAndUpcomingTrips.length})
+            ● Active & Passed Corridor Trips ({operableTimetableTrips.length})
           </span>
           <div className="space-y-1">
-            {runningAndUpcomingTrips.map((trip) => {
+            {operableTimetableTrips.map((trip) => {
               const tripBusStatus = getBusLifecycleStatus(currentTimeStr, trip.departureTime);
+              const isPassed = tripBusStatus === 'Expired';
               const isSelected = activeInspectionTrip.id === trip.id;
               const isMyBus = assignedTripId === trip.id;
-              const isReturn = trip.fromStopId === 'apu';
 
               return (
                 <button
                   key={trip.id}
                   onClick={() => setSelectedScheduleTripId(trip.id)}
                   className={`w-full text-left p-2 rounded transition flex items-center justify-between text-xs border ${
-                    isSelected
+                    isPassed
+                      ? isSelected
+                        ? 'bg-zinc-200 dark:bg-zinc-800 border-zinc-500 text-zinc-900 dark:text-white'
+                        : 'bg-zinc-100 dark:bg-zinc-900/80 border-zinc-300 dark:border-zinc-700 hover:border-zinc-500 text-zinc-600 dark:text-zinc-400'
+                      : isSelected
                       ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 text-zinc-900 dark:text-white'
                       : 'bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 text-zinc-700 dark:text-zinc-300'
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-zinc-900 dark:text-white">{trip.departureTime}</span>
+                    <span className={`font-mono font-bold ${isPassed ? 'text-zinc-600 dark:text-zinc-400' : 'text-zinc-900 dark:text-white'}`}>
+                      {trip.departureTime}
+                    </span>
                     <div>
                       <div className="flex items-center gap-1 font-semibold leading-tight">
                         <span>{trip.routeName}</span>
@@ -1177,15 +1241,24 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                             Your Bus
                           </span>
                         )}
+                        {isPassed && (
+                          <span className="text-[9px] px-1 rounded bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700 font-mono">
+                            Passed
+                          </span>
+                        )}
                       </div>
                       <div className="text-[9px] font-mono text-zinc-500">
-                        Status: <strong className="text-emerald-700 dark:text-emerald-400">{tripBusStatus}</strong> · Cap: {trip.seatedCapacity ?? trip.totalSeats ?? 40}
+                        Status:{' '}
+                        <strong className={isPassed ? 'text-zinc-600 dark:text-zinc-400' : 'text-emerald-700 dark:text-emerald-400'}>
+                          {tripBusStatus}
+                        </strong>{' '}
+                        · Cap: {trip.seatedCapacity ?? trip.totalSeats ?? 40}
                       </div>
                     </div>
                   </div>
 
-                  <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400">
-                    {isSelected ? 'Viewing' : 'Inspect'}
+                  <span className={`text-[10px] font-mono ${isPassed ? 'text-zinc-600 dark:text-zinc-300' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                    {isSelected ? 'Viewing' : isPassed ? 'Manual Check' : 'Inspect'}
                   </span>
                 </button>
               );
@@ -1193,35 +1266,36 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
           </div>
         </div>
 
-        {/* SECTION 2: Expired & Passed Schedules in Separate Gray Below Section */}
-        {passedTrips.length > 0 && (
+        {/* SECTION 2 (Unavailable / Locked): Upcoming Schedules Not Available Now */}
+        {unavailableTimetableTrips.length > 0 && (
           <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800 space-y-1.5">
             <button
-              onClick={() => setIsPassedExpanded(!isPassedExpanded)}
+              onClick={() => setIsUnavailableTimetableExpanded(!isUnavailableTimetableExpanded)}
               className="w-full flex items-center justify-between text-[10px] font-mono text-zinc-500 dark:text-zinc-400 uppercase py-1"
             >
-              <span>Past {assignedCorridorName} Schedules ({passedTrips.length} completed) - Gray Section</span>
-              <span className="underline">{isPassedExpanded ? 'Collapse' : 'Expand'}</span>
+              <span className="flex items-center gap-1">
+                <Lock className="w-3 h-3" />
+                <span>Unavailable {assignedCorridorName} Schedules ({unavailableTimetableTrips.length} Not Available Now)</span>
+              </span>
+              <span className="underline">{isUnavailableTimetableExpanded ? 'Collapse' : 'Expand'}</span>
             </button>
 
-            {isPassedExpanded && (
+            {isUnavailableTimetableExpanded && (
               <div className="space-y-1">
-                {passedTrips.map((trip) => {
-                  const isSelected = activeInspectionTrip.id === trip.id;
+                {unavailableTimetableTrips.map((trip) => {
                   const tripBusStatus = getBusLifecycleStatus(currentTimeStr, trip.departureTime);
 
                   return (
-                    <button
+                    <div
                       key={trip.id}
-                      onClick={() => setSelectedScheduleTripId(trip.id)}
-                      className={`w-full text-left p-2 rounded transition flex items-center justify-between text-xs border bg-zinc-100/60 dark:bg-zinc-950/40 border-zinc-200 dark:border-zinc-800/60 opacity-60 grayscale hover:opacity-100 hover:grayscale-0 ${
-                        isSelected ? 'border-zinc-400 text-zinc-900 dark:text-white' : 'text-zinc-600 dark:text-zinc-400'
-                      }`}
+                      aria-disabled="true"
+                      className="w-full text-left p-2 rounded flex items-center justify-between text-xs border bg-zinc-100/60 dark:bg-zinc-950/40 border-zinc-200 dark:border-zinc-800/60 opacity-50 grayscale cursor-not-allowed select-none"
+                      title="Locked: Schedule has not reached its operating window (Not Available Now)."
                     >
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-zinc-500 line-through">{trip.departureTime}</span>
+                        <span className="font-mono text-zinc-500">{trip.departureTime}</span>
                         <div>
-                          <div className="font-semibold text-zinc-600 dark:text-zinc-400 leading-tight">
+                          <div className="font-semibold text-zinc-500 dark:text-zinc-400 leading-tight">
                             {trip.routeName}
                           </div>
                           <div className="text-[9px] font-mono text-zinc-500">
@@ -1230,10 +1304,11 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                         </div>
                       </div>
 
-                      <span className="text-[10px] font-mono text-zinc-500">
-                        {isSelected ? 'Viewing' : 'Inspect'}
+                      <span className="text-[10px] font-mono text-zinc-400 flex items-center gap-1">
+                        <Lock className="w-3 h-3" />
+                        <span>Locked</span>
                       </span>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
