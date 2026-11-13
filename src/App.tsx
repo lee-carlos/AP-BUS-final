@@ -36,7 +36,6 @@ import { SimulationBar } from './components/SimulationBar';
 import { StandbyNotificationModal } from './components/StandbyNotificationModal';
 import { SearchModal } from './components/SearchModal';
 import { ScheduleDocModal } from './components/ScheduleDocModal';
-import { DriverConsoleModal } from './components/DriverConsoleModal';
 import { DriverPortal } from './components/DriverPortal';
 import { ScenarioLogPanel } from './components/ScenarioLogPanel';
 import { Bus, BellRing, CheckCircle2, AlertTriangle } from 'lucide-react';
@@ -93,8 +92,6 @@ export default function App() {
   const [isBoardingPassOpen, setIsBoardingPassOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
-  const [isDriverConsoleOpen, setIsDriverConsoleOpen] = useState(false);
-  const [driverTripId, setDriverTripId] = useState<string>('demo-a-0800');
   const [showSimulator, setShowSimulator] = useState(true);
 
   // Seat Alert offers the current user chose to ignore ("Keep Current Bus")
@@ -482,10 +479,6 @@ export default function App() {
             onResetData={handleResetDemo}
             onToggleSimulator={() => setShowSimulator(!showSimulator)}
             onViewScheduleDoc={() => setIsPdfModalOpen(true)}
-            onOpenDriverConsole={() => {
-              setDriverTripId('demo-a-0800');
-              setIsDriverConsoleOpen(true);
-            }}
           />
 
           {/* 2 Search Bars (From & To) with Reversed Swap Button */}
@@ -582,10 +575,6 @@ export default function App() {
                 onNextServiceDay={handleNextServiceDay}
                 currentUser={currentUser}
                 onToggleUserLocation={handleToggleUserLocation}
-                onOpenDriverConsole={() => {
-                  setDriverTripId('demo-a-0800');
-                  setIsDriverConsoleOpen(true);
-                }}
                 onResetDemo={handleResetDemo}
               />
             </div>
@@ -671,18 +660,6 @@ export default function App() {
           currentTimeStr={simulatedTimeStr}
           onAcceptSeat={handleAcceptClaimSeat}
           onDecline={() => setDismissedOffers((prev) => [...prev, standbyOffer.trip.id])}
-        />
-      )}
-
-      {/* MODAL 8: Driver / Staff Boarding Console (Section 13) */}
-      {isDriverConsoleOpen && (
-        <DriverConsoleModal
-          trip={trips.find((t) => t.id === driverTripId) || trips[0]}
-          allBookings={allBookingsFlat}
-          users={users}
-          onToggleBoarding={handleDriverToggleBoarding}
-          onScanPass={(token) => handleDriverScanPass(driverTripId, token)}
-          onClose={() => setIsDriverConsoleOpen(false)}
         />
       )}
     </PhoneShell>

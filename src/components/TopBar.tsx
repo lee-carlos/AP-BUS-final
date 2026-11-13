@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { DemoUser } from '../types/bus';
-import { Search, MoreVertical, RefreshCw, FileText, UserCheck, X, Bus, Sun, Moon } from 'lucide-react';
+import { Search, MoreVertical, RefreshCw, FileText, UserCheck, X, Sun, Moon } from 'lucide-react';
 
 interface TopBarProps {
   currentUser: DemoUser;
@@ -11,7 +11,6 @@ interface TopBarProps {
   onResetData: () => void;
   onToggleSimulator: () => void;
   onViewScheduleDoc: () => void;
-  onOpenDriverConsole?: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -23,7 +22,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   onResetData,
   onToggleSimulator,
   onViewScheduleDoc,
-  onOpenDriverConsole,
 }) => {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
 
@@ -131,19 +129,6 @@ export const TopBar: React.FC<TopBarProps> = ({
                 <UserCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                 <span>Switch Demo Persona</span>
               </button>
-
-              {(currentUser.role === 'Staff' || currentUser.role === 'Lecturer' || currentUser.role === 'Driver') && onOpenDriverConsole && (
-                <button
-                  onClick={() => {
-                    setShowMoreMenu(false);
-                    onOpenDriverConsole();
-                  }}
-                  className="w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2 text-emerald-600 dark:text-emerald-400 transition"
-                >
-                  <Bus className="w-3.5 h-3.5" />
-                  <span>Open Quick Boarding Console</span>
-                </button>
-              )}
 
               <button
                 onClick={() => {

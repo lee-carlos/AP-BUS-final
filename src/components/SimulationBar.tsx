@@ -8,7 +8,6 @@ import {
   MapPin,
   Zap,
   RotateCcw,
-  Bus,
 } from 'lucide-react';
 
 const SPEED_OPTIONS = [0.25, 0.5, 1, 5, 10] as const;
@@ -31,7 +30,6 @@ interface SimulationBarProps {
   onSetTime: (timeStr: string) => void;
   currentUser: DemoUser;
   onToggleUserLocation: () => void;
-  onOpenDriverConsole?: () => void;
   onResetDemo: () => void;
   dayLabel?: string; // e.g. "Fri 13 Nov"
   onNextServiceDay?: () => void;
@@ -46,7 +44,6 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
   onSetTime,
   currentUser,
   onToggleUserLocation,
-  onOpenDriverConsole,
   onResetDemo,
   dayLabel,
   onNextServiceDay,
@@ -147,11 +144,11 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
         </div>
       </div>
 
-      {/* Controls: Location, Driver Console & Reset (Sharp 6px buttons) */}
+      {/* Controls: Location, Reset & Next Service Day (Sharp 6px buttons) */}
       <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-zinc-200 dark:border-zinc-800">
         <button
           onClick={onToggleUserLocation}
-          className={`px-2 py-1 rounded-sm border flex items-center justify-center gap-1 text-[10px] font-semibold transition ${
+          className={`col-span-2 px-2 py-1 rounded-sm border flex items-center justify-center gap-1 text-[10px] font-semibold transition ${
             currentUser.isNearStop
               ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800/40 text-emerald-800 dark:text-emerald-300'
               : 'bg-zinc-100 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400'
@@ -160,15 +157,6 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
         >
           <MapPin className="w-3 h-3 shrink-0" />
           <span className="truncate">{currentUser.isNearStop ? 'Location: At stop (30m)' : 'Location: Away (~11km)'}</span>
-        </button>
-
-        <button
-          onClick={onOpenDriverConsole}
-          className="px-2 py-1 rounded-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:border-emerald-500 text-zinc-800 dark:text-zinc-200 flex items-center justify-center gap-1 text-[10px] font-semibold transition"
-          title="Open Bus Staff Driver Console"
-        >
-          <Bus className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <span>Driver Console</span>
         </button>
 
         <button
