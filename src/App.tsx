@@ -83,7 +83,7 @@ export default function App() {
 
   // Continuous Auto-Tick Clock Engine
   const [isAutoTickRunning, setIsAutoTickRunning] = useState<boolean>(false);
-  const [tickSpeed, setTickSpeed] = useState<number>(1); // 1x, 5x, 10x
+  const [tickSpeed, setTickSpeed] = useState<number>(1); // 0.25x, 0.50x, 1x, 5x, 10x
 
   // Modals & Active selections
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
@@ -211,7 +211,7 @@ export default function App() {
         const next = `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
         return advanceTo(prev, next);
       });
-    }, 1000 / tickSpeed);
+    }, Math.round(1000 / tickSpeed));
 
     return () => clearInterval(interval);
   }, [isAutoTickRunning, tickSpeed]);

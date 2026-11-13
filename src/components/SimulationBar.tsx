@@ -11,10 +11,21 @@ import {
   Bus,
 } from 'lucide-react';
 
+const SPEED_OPTIONS = [0.25, 0.5, 1, 5, 10] as const;
+
+function formatSpeed(speed: number): string {
+  return speed === 0.5 ? '0.50x' : `${speed}x`;
+}
+
+function formatTickInterval(speed: number): string {
+  const secs = 1 / speed;
+  return Number.isInteger(secs) ? `1m / ${secs}s` : `1m / ${secs.toFixed(1)}s`;
+}
+
 interface SimulationBarProps {
   simulatedTimeStr: string;
   isAutoTickRunning: boolean;
-  tickSpeed: number; // 1, 5, 10
+  tickSpeed: number; // 0.25, 0.5, 1, 5, 10
   onToggleAutoTick: () => void;
   onSetTickSpeed: (speed: number) => void;
   onSetTime: (timeStr: string) => void;
@@ -52,7 +63,7 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
           {isAutoTickRunning && (
             <span className="inline-flex items-center gap-1 text-[9px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/40 px-1 py-0.2 rounded-xs">
               <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
-              RUNNING ({tickSpeed}x)
+              RUNNING ({formatSpeed(tickSpeed)})
             </span>
           )}
         </div>
@@ -70,17 +81,36 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
             {isAutoTickRunning ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
             <span>{isAutoTickRunning ? 'Pause' : 'Auto-Tick'}</span>
           </button>
-
-          {isAutoTickRunning && (
-            <button
-              onClick={() => onSetTickSpeed(tickSpeed === 1 ? 5 : tickSpeed === 5 ? 10 : 1)}
-              className="px-1.5 py-0.5 rounded-sm bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 text-[10px] font-mono font-bold flex items-center gap-0.5"
-              title="Cycle Speed (1x, 5x, 10x)"
-            >
-              <FastForward className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" /> {tickSpeed}x
-            </button>
-          )}
         </div>
+      </div>
+
+      {/* Auto-Tick Speed Selector (0.25x, 0.50x, 1x, 5x, 10x) */}
+      <div className="flex items-center justify-between gap-2 font-mono">
+        <div className="flex items-center gap-1 flex-wrap">
+          <span className="text-[10px] text-zinc-500 dark:text-zinc-400 mr-0.5">SPEED:</span>
+          {SPEED_OPTIONS.map((speed) => {
+            const active = tickSpeed === speed;
+            return (
+              <button
+                key={speed}
+                type="button"
+                onClick={() => onSetTickSpeed(speed)}
+                aria-pressed={active}
+                className={`px-1.5 py-0.5 rounded-sm text-[10px] font-bold transition border ${
+                  active
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                    : 'bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800 hover:border-emerald-500/50'
+                }`}
+                title={`Set Auto-Tick speed to ${formatSpeed(speed)} (${formatTickInterval(speed)})`}
+              >
+                {formatSpeed(speed)}
+              </button>
+            );
+          })}
+        </div>
+        <span className="text-[9px] text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
+          {formatTickInterval(tickSpeed)}
+        </span>
       </div>
 
       {/* Scenario 19.2 Milestone Quick-Jumps: Sharp 6px Rectangles */}
