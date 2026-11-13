@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Booking } from '../types/bus';
-import { formatTime12h, getMinutesUntilDeparture, getBusLifecycleStatus, PENALTY_SYSTEM } from '../utils/bookingRules';
+import { formatTime12h, getMinutesUntilDeparture, getBusLifecycleStatus } from '../utils/bookingRules';
 import {
   Bus,
   Bell,
@@ -21,6 +21,8 @@ interface BookedBusCardProps {
   minorPenalties: number;
   majorPenalties: number;
   penaltyPoints: number;
+  isRestricted?: boolean; // true only on the one restricted service day
+  restrictedOnLabel?: string | null; // e.g. "Mon 16 Nov" (today's or the upcoming restricted day)
   currentTimeStr: string;
   userCoords: { lat: number; lng: number };
   onToggleNotify30: (bookingId: string) => void;
@@ -35,6 +37,8 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
   minorPenalties,
   majorPenalties,
   penaltyPoints,
+  isRestricted = false,
+  restrictedOnLabel = null,
   currentTimeStr,
   onToggleNotify30,
   onCheckInNow,
@@ -43,7 +47,7 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
   onScanForDepart,
 }) => {
   const [activeTab, setActiveTab] = useState<number>(0);
-  const isSuspended = penaltyPoints >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD;
+  const isSuspended = isRestricted;
 
   if (bookings.length === 0) {
     return (
@@ -54,7 +58,9 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
             <span>Active Reservations (0)</span>
           </div>
           <span className="font-mono text-[10px] text-zinc-500">
-            Penalties: {penaltyPoints}/6 pts
+            {isRestricted
+              ? `Restricted today · ${penaltyPoints} pts`
+              : `Penalties: ${penaltyPoints}/6 pts${restrictedOnLabel ? ` · restricted ${restrictedOnLabel}` : ''}`}
           </span>
         </div>
 
@@ -82,7 +88,7 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
   const isNoShow = booking.status === 'NO_SHOW';
 
   // Check-in assessment: window opens T-30, closes T-10
-  const isWithinCheckInWindow = minutesUntilDeparture <= 30 && minutesUntilDeparture >= 10;
+  const isWithinCheckInWindow = minutesUntilDeparture <= 30 && minutesUntilDeparture > 10;
   const isBeforeCheckInWindow = minutesUntilDeparture > 30;
 
   // Waiting & Depart 2-minute window active
@@ -103,11 +109,12 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
         <div className="text-[10px] font-mono">
           {isSuspended ? (
             <span className="text-zinc-900 dark:text-white font-bold flex items-center gap-1">
-              <ShieldAlert className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /> Suspended (6/6 pts)
+              <ShieldAlert className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /> Restricted today ({penaltyPoints} pts)
             </span>
           ) : penaltyPoints > 0 ? (
             <span className="text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
               <ShieldAlert className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /> Penalties: {penaltyPoints}/6 pts
+              {restrictedOnLabel ? ` · restricted ${restrictedOnLabel}` : ''}
             </span>
           ) : (
             <span className="text-emerald-700 dark:text-emerald-400 flex items-center gap-1 font-medium">
@@ -237,7 +244,7 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
                   {busStatus === 'Arrived' ? 'Bus Arrived · 2m Departure Window Open' : 'Bus Waiting at Bay (2m Departure Window)'}
                 </span>
                 <p className="text-[10px] text-amber-800 dark:text-amber-300">
-                  During these 2 minutes, acknowledge your depart scan to board safely, or remain check-in only without depart to trigger the 2 score penalty rule.
+                  Show your QR pass at the door scanner now. A checked-in passenger who is not scanned before departure is marked No-show (+2 points).
                 </p>
               </div>
             </div>
@@ -247,7 +254,7 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
                 className="flex-1 py-1 px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-sm shadow-2xs flex items-center justify-center gap-1.5 transition"
               >
                 <CheckCircle className="w-3.5 h-3.5" />
-                Scan for Depart
+                Simulate door scan
               </button>
               <button
                 onClick={() => onOpenBoardingPass(booking)}
@@ -303,7 +310,7 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
           ) : isNoShow ? (
             <div className="p-2 rounded-sm bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-200 flex items-center gap-1.5 text-xs">
               <AlertCircle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
-              <span>No-Show: Checked in but failed to scan for depart before bus departed (2 score penalty applied).</span>
+              <span>No-show: checked in but the QR pass was not scanned before departure (+2 points).</span>
             </div>
           ) : isWithinCheckInWindow ? (
             /* Inside T-30 to T-10 Window */
@@ -313,7 +320,7 @@ export const BookedBusCard: React.FC<BookedBusCardProps> = ({
                 <div>
                   <p className="font-bold">Check-in Window Open (T−30m to T−10m)</p>
                   <p className="text-[10px] text-emerald-700 dark:text-emerald-400">
-                    Closes in {minutesUntilDeparture - 10}m. Tap to verify GPS proximity.
+                    Closes in {minutesUntilDeparture - 10}m. Tap to verify you are at the pickup point.
                   </p>
                 </div>
               </div>

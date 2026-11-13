@@ -6,6 +6,7 @@ interface PhoneShellProps {
   simulatedTimeStr?: string;
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
+  sidePanel?: React.ReactNode; // rendered beside the phone on wide screens, below it on narrow ones
 }
 
 export const PhoneShell: React.FC<PhoneShellProps> = ({
@@ -13,6 +14,7 @@ export const PhoneShell: React.FC<PhoneShellProps> = ({
   simulatedTimeStr,
   theme,
   onToggleTheme,
+  sidePanel,
 }) => {
   const [realTime, setRealTime] = useState<string>('');
   const [isPhoneFrame, setIsPhoneFrame] = useState<boolean>(true);
@@ -89,6 +91,7 @@ export const PhoneShell: React.FC<PhoneShellProps> = ({
         </div>
       </header>
 
+      <div className="w-full flex flex-col items-center lg:flex-row lg:items-start lg:justify-center gap-4">
       {/* Main Container - Sharp Precision Technical Shell */}
       <div
         className={`w-full transition-all duration-300 ${
@@ -138,6 +141,8 @@ export const PhoneShell: React.FC<PhoneShellProps> = ({
             <div className="w-28 h-1 bg-zinc-300 dark:bg-zinc-700 rounded-full" />
           </div>
         )}
+      </div>
+      {sidePanel}
       </div>
     </div>
   );

@@ -17,9 +17,9 @@ import {
   formatTime12h,
   isTripPastSchedule,
   getBusLifecycleStatus,
-} from './bookingRules';
-import { calculateDistanceMeters, isWithinBusStopRange, getStopRadius } from './geo';
-import { Booking, BusTrip } from '../types/bus';
+} from './bookingRules.ts';
+import { isWithinBusStopRange, getStopRadius } from './geo.ts';
+import type { Booking, BusTrip } from '../types/bus.ts';
 
 test('booking window opens at 06:00 AM MYT sharp', () => {
   assert.equal(isBookingWindowOpen('05:59'), false);
@@ -31,15 +31,16 @@ test('booking window opens at 06:00 AM MYT sharp', () => {
 test('normal booking closes at T-10 minutes', () => {
   // Departure at 08:00
   assert.equal(isNormalBookingOpen('07:49', '08:00'), true); // 11 mins left -> OPEN
-  assert.equal(isNormalBookingOpen('07:50', '08:00'), true); // exactly 10 mins left -> OPEN
+  assert.equal(isNormalBookingOpen('07:50', '08:00'), false); // exactly T-10 -> CLOSED (closes AT T-10)
   assert.equal(isNormalBookingOpen('07:51', '08:00'), false); // 9 mins left -> CLOSED
 });
 
-test('claim window closes at T-3 minutes or when boarding closed', () => {
-  assert.equal(isClaimWindowOpen('07:56', '08:00', true), true); // 4 mins left -> OPEN
-  assert.equal(isClaimWindowOpen('07:57', '08:00', true), true); // 3 mins left -> OPEN
-  assert.equal(isClaimWindowOpen('07:58', '08:00', true), false); // 2 mins left -> CLOSED
-  assert.equal(isClaimWindowOpen('07:50', '08:00', false), false); // Boarding closed by driver -> CLOSED
+test('claim window runs from T-30 to T-3 and does not depend on boarding being open', () => {
+  assert.equal(isClaimWindowOpen('07:29', '08:00'), false); // 31 mins left -> not open yet
+  assert.equal(isClaimWindowOpen('07:30', '08:00'), true); // T-30 -> OPEN
+  assert.equal(isClaimWindowOpen('07:50', '08:00'), true); // T-10 (seat just released) -> OPEN
+  assert.equal(isClaimWindowOpen('07:57', '08:00'), true); // T-3 -> last valid minute
+  assert.equal(isClaimWindowOpen('07:58', '08:00'), false); // 2 mins left -> CLOSED
 });
 
 test('stop radii match prototype specifications (APU: 100m, LRT: 120m)', () => {
@@ -91,6 +92,16 @@ test('geo check-in assessment respects T-30 to T-10 window', () => {
     currentBookingStatus: 'RESERVED',
   });
   assert.equal(res3.status, 'OUT_OF_RANGE');
+
+  // Case 3b: exactly T-10 (07:50) -> WINDOW_CLOSED (check-in is T-30 to before T-10)
+  const res3b = evaluateCheckInAssessment({
+    currentTimeStr: '07:50',
+    departureTimeStr: '08:00',
+    userCoord: userNear,
+    stopCoord: lrtStop,
+    stopIdentifier: 'lrt',
+  });
+  assert.equal(res3b.status, 'WINDOW_CLOSED');
 
   // Case 4: T-8 (07:52 for 08:00 bus) -> WINDOW_CLOSED
   const res4 = evaluateCheckInAssessment({
@@ -215,15 +226,25 @@ test('validateBookingEligibility enforces maximum 2 active bookings & duplicate 
   assert.equal(maxCheck.canBook, false);
   assert.equal(maxCheck.reason, 'MAX_LIMIT_REACHED');
 
-  // Block restricted account (>= 6 points)
+  // Block an account only on its restricted service day
   const restrictCheck = validateBookingEligibility({
     activeBookings: [],
     candidateFromStopName: 'LRT Bukit Jalil',
     candidateToStopName: 'APU Campus',
-    penaltyPoints: 6,
+    isRestricted: true,
   });
   assert.equal(restrictCheck.canBook, false);
   assert.equal(restrictCheck.reason, 'RESTRICTED');
+
+  // 6 points alone is NOT a permanent block: on any other day the account can book
+  const sixPointsOtherDay = validateBookingEligibility({
+    activeBookings: [],
+    candidateFromStopName: 'LRT Bukit Jalil',
+    candidateToStopName: 'APU Campus',
+    isRestricted: false,
+    penaltyPoints: 6,
+  });
+  assert.equal(sixPointsOtherDay.canBook, true);
 });
 
 test('validateClaimEligibility strictly requires booking on immediately following bus', () => {
@@ -255,12 +276,11 @@ test('validateClaimEligibility strictly requires booking on immediately followin
 
   const claimValid = validateClaimEligibility({
     targetTrip: tripA,
-    allTripsInRoute: [tripA, tripB, tripC],
+    allTrips: [tripA, tripB, tripC],
     userBookings: [bookingOnB],
     currentTimeStr: '07:51',
     userCoord: userAtLrt,
-    stopCoord: lrtStop,
-    stopIdentifier: 'lrt',
+    pickupCoord: lrtStop,
   });
   assert.equal(claimValid.eligible, true);
   assert.equal(claimValid.sourceBooking?.id, 'bk-b');
@@ -274,14 +294,59 @@ test('validateClaimEligibility strictly requires booking on immediately followin
 
   const claimInvalidLeap = validateClaimEligibility({
     targetTrip: tripA,
-    allTripsInRoute: [tripA, tripB, tripC],
+    allTrips: [tripA, tripB, tripC],
     userBookings: [bookingOnC],
     currentTimeStr: '07:51',
     userCoord: userAtLrt,
-    stopCoord: lrtStop,
-    stopIdentifier: 'lrt',
+    pickupCoord: lrtStop,
   });
   assert.equal(claimInvalidLeap.eligible, false);
+  assert.match(claimInvalidLeap.reason, /immediately after/);
+
+  // Boarding not opened by the driver yet must NOT block a Claim (tripA.boardingOpen = false)
+  const claimBeforeBoarding = validateClaimEligibility({
+    targetTrip: { ...tripA, boardingOpen: false },
+    allTrips: [tripA, tripB, tripC],
+    userBookings: [bookingOnB],
+    currentTimeStr: '07:52',
+    userCoord: userAtLrt,
+    pickupCoord: lrtStop,
+  });
+  assert.equal(claimBeforeBoarding.eligible, true);
+
+  // No free seat -> rejected
+  const claimFull = validateClaimEligibility({
+    targetTrip: { ...tripA, bookedSeatIds: ['1A', '1B'] },
+    allTrips: [tripA, tripB, tripC],
+    userBookings: [bookingOnB],
+    currentTimeStr: '07:52',
+    userCoord: userAtLrt,
+    pickupCoord: lrtStop,
+  });
+  assert.equal(claimFull.eligible, false);
+
+  // Too far from the pickup point -> rejected
+  const claimFar = validateClaimEligibility({
+    targetTrip: tripA,
+    allTrips: [tripA, tripB, tripC],
+    userBookings: [bookingOnB],
+    currentTimeStr: '07:52',
+    userCoord: { lat: 3.1579, lng: 101.7116 },
+    pickupCoord: lrtStop,
+  });
+  assert.equal(claimFar.eligible, false);
+
+  // The same route in the opposite direction is never "the next schedule"
+  const reverseTrip: BusTrip = { ...tripB, id: 'reverse', fromStopId: 'apu', toStopId: 'lrt', departureTime: '08:05' };
+  const claimReverse = validateClaimEligibility({
+    targetTrip: tripA,
+    allTrips: [tripA, reverseTrip, tripB, tripC],
+    userBookings: [{ ...bookingOnB, tripId: 'reverse', departureTime: '08:05' }],
+    currentTimeStr: '07:52',
+    userCoord: userAtLrt,
+    pickupCoord: lrtStop,
+  });
+  assert.equal(claimReverse.eligible, false);
 });
 
 test('formatTime12h outputs clean 12h labels', () => {

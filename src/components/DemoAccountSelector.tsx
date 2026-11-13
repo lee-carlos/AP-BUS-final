@@ -5,9 +5,12 @@ import { MapPin, ArrowRight, Bus, ShieldCheck } from 'lucide-react';
 
 interface DemoAccountSelectorProps {
   onSelectAccount: (user: DemoUser) => void;
+  accounts?: DemoUser[]; // live accounts (penalty points change as the scenario runs)
+  dayLabel?: string;
 }
 
-export const DemoAccountSelector: React.FC<DemoAccountSelectorProps> = ({ onSelectAccount }) => {
+export const DemoAccountSelector: React.FC<DemoAccountSelectorProps> = ({ onSelectAccount, accounts, dayLabel }) => {
+  const list = accounts && accounts.length > 0 ? accounts : DEMO_ACCOUNTS;
   return (
     <div className="flex-1 flex flex-col px-4 py-5 space-y-4 overflow-y-auto bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 transition-colors">
       {/* Brand Hero */}
@@ -27,10 +30,10 @@ export const DemoAccountSelector: React.FC<DemoAccountSelectorProps> = ({ onSele
       <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-3 space-y-1">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider font-mono">
           <ShieldCheck className="w-3.5 h-3.5" />
-          <span>Campus Persona Hub</span>
+          <span>Demo personas · one per rule case{dayLabel ? ` · ${dayLabel}` : ''}</span>
         </div>
         <p className="text-[11px] text-zinc-600 dark:text-zinc-400 leading-relaxed">
-          Students and <strong className="text-zinc-900 dark:text-white font-semibold">Lecturers</strong> can order and book bus seats with full parity. <strong className="text-emerald-600 dark:text-emerald-400 font-semibold">Bus Drivers</strong> enter a dedicated operations console to select their bus (PIN: 1234), inspect live seating, and confirm passenger attendance.
+          Each account demonstrates <strong className="text-zinc-900 dark:text-white font-semibold">one case</strong>. Open any persona, press <strong className="text-emerald-600 dark:text-emerald-400 font-semibold">Auto-Tick</strong> and follow the Scenario log, or act for the persona yourself. This prototype uses a simulated clock and location; there is no login yet.
         </p>
       </div>
 
@@ -39,11 +42,11 @@ export const DemoAccountSelector: React.FC<DemoAccountSelectorProps> = ({ onSele
         {/* SECTION 1: Students & Lecturers */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-[10px] font-mono uppercase text-zinc-500 font-bold px-0.5">
-            <span>Passengers (Students & Campus Lecturers)</span>
-            <span>Can Order Bus</span>
+            <span>Students</span>
+            <span>Case shown</span>
           </div>
 
-          {DEMO_ACCOUNTS.filter((a) => a.role !== 'Driver').map((account) => {
+          {list.filter((a) => a.role !== 'Driver').map((account) => {
             const isNear = account.isNearStop;
 
             return (
@@ -81,7 +84,7 @@ export const DemoAccountSelector: React.FC<DemoAccountSelectorProps> = ({ onSele
                           ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
                           : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
                       }`}>
-                        {account.role === 'Student' ? `${account.penaltyPoints}/6 pts` : account.role}
+                        {account.role !== 'Student' ? account.role : account.isRestricted ? 'Restricted today' : `${account.penaltyPoints}/6 pts`}
                       </span>
                     </div>
 
@@ -100,7 +103,12 @@ export const DemoAccountSelector: React.FC<DemoAccountSelectorProps> = ({ onSele
                       </span>
                     </div>
 
-                    <p className="text-[10px] text-zinc-500 dark:text-zinc-400 line-clamp-1 mt-0.5">
+                    {account.scenario && (
+                      <p className="text-[10px] font-mono font-bold text-emerald-700 dark:text-emerald-400 mt-1">
+                        {account.scenario}
+                      </p>
+                    )}
+                    <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-0.5 leading-snug">
                       {account.description}
                     </p>
                   </div>
@@ -108,10 +116,10 @@ export const DemoAccountSelector: React.FC<DemoAccountSelectorProps> = ({ onSele
 
                 <div className="mt-2 pt-1.5 border-t border-zinc-100 dark:border-zinc-800/80 flex items-center justify-between text-[10px]">
                   <span className="text-zinc-500 dark:text-zinc-400 font-mono">
-                    {isNear ? '● GPS Verified (In Range)' : '○ GPS Outside Zone'}
+                    {isNear ? '● At the pickup point' : '○ Away from the pickup point'}
                   </span>
                   <span className="font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
-                    <span>Order Bus as {account.role}</span>
+                    <span>Open as {account.name.split(' ')[0]}</span>
                     <ArrowRight className="w-3 h-3" />
                   </span>
                 </div>
@@ -127,7 +135,7 @@ export const DemoAccountSelector: React.FC<DemoAccountSelectorProps> = ({ onSele
             <span>Assign Bus · PIN: 1234</span>
           </div>
 
-          {DEMO_ACCOUNTS.filter((a) => a.role === 'Driver').map((driver) => (
+          {list.filter((a) => a.role === 'Driver').map((driver) => (
             <button
               key={driver.id}
               onClick={() => onSelectAccount(driver)}
@@ -158,7 +166,12 @@ export const DemoAccountSelector: React.FC<DemoAccountSelectorProps> = ({ onSele
                     </span>
                   </div>
 
-                  <p className="text-[10px] text-zinc-600 dark:text-zinc-300 line-clamp-1 mt-1">
+                  {driver.scenario && (
+                    <p className="text-[10px] font-mono font-bold text-emerald-700 dark:text-emerald-400 mt-1">
+                      {driver.scenario}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-zinc-600 dark:text-zinc-300 mt-0.5 leading-snug">
                     {driver.description}
                   </p>
                 </div>

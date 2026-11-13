@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { BusTrip, Booking, DemoUser, LocationCoord } from '../types/bus';
+import { BusTrip, Booking, DemoUser, LocationCoord, ScanResult } from '../types/bus';
 import { formatTime12h, getMinutesUntilDeparture, getBusLifecycleStatus } from '../utils/bookingRules';
 import { APU_STOPS, ROUTE_WAYPOINTS } from '../data/apuRoutes';
 import {
@@ -39,9 +39,10 @@ interface DriverPortalProps {
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   onSwitchDriver: () => void;
-  onManualConfirmBoarding: (bookingId: string) => void;
+  onManualConfirmBoarding: (bookingId: string, reason: string) => { ok: boolean; message: string };
+  onScanPass: (tripId: string, qrToken: string) => ScanResult; // only the QR token is accepted
   onToggleBoarding: (tripId: string) => void;
-  onManualSetTripStatus: (tripId: string, status: 'ARRIVED' | 'DEPARTED') => void;
+  onManualSetTripStatus: (tripId: string, status: 'ARRIVED' | 'DEPARTED') => { ok: boolean; message: string };
   onResetDemo: () => void;
   apiKey?: string;
 }
@@ -60,6 +61,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   onToggleTheme,
   onSwitchDriver,
   onManualConfirmBoarding,
+  onScanPass,
   onToggleBoarding,
   onManualSetTripStatus,
   onResetDemo,
@@ -124,6 +126,11 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   } | null>(null);
   const [manualPinInput, setManualPinInput] = useState<string>('');
   const [manualPinError, setManualPinError] = useState<string | null>(null);
+  const [manualReason, setManualReason] = useState<string>('');
+
+  // QR scanner (door of the inspected shuttle)
+  const [scanInput, setScanInput] = useState<string>('');
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
 
   // Manual Arrived / Departed action modal with PIN code confirmation
   const [pendingManualStatusAction, setPendingManualStatusAction] = useState<'ARRIVED' | 'DEPARTED' | null>(null);
@@ -252,6 +259,14 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
       }
     });
 
+    // Seats held by passengers outside the demo personas (no booking record in this prototype)
+    const personaSeats = new Set(
+      activeTripBookings
+        .filter((b) => b.status === 'RESERVED' || b.status === 'CHECKED_IN' || b.status === 'BOARDED')
+        .map((b) => b.seatId)
+    );
+    bookedCount += (activeInspectionTrip?.bookedSeatIds || []).filter((seat) => !personaSeats.has(seat)).length;
+
     // Passengers who have completed GPS check-in but haven't entered the bus yet
     const waitingOutsideCount = Math.max(0, checkInCount - insideCount);
 
@@ -317,6 +332,14 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     setManualConfirmTarget({ booking, user });
     setManualPinInput('');
     setManualPinError(null);
+    setManualReason('');
+  };
+
+  const runScan = (token: string) => {
+    if (!token.trim()) return;
+    const res = onScanPass(activeInspectionTrip.id, token);
+    setScanResult(res);
+    if (res.success) setScanInput('');
   };
 
   const handleConfirmManualBoarding = (e: React.FormEvent) => {
@@ -326,9 +349,18 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
       return;
     }
 
+    if (manualReason.trim().length < 5) {
+      setManualPinError('Write a short reason (at least 5 characters). It is recorded in the log.');
+      return;
+    }
+
     if (manualConfirmTarget) {
-      onManualConfirmBoarding(manualConfirmTarget.booking.id);
-      showToast(`Attendance Confirmed: ${manualConfirmTarget.user?.name || 'Passenger'} (Seat ${manualConfirmTarget.booking.seatId}) is now Inside.`);
+      const res = onManualConfirmBoarding(manualConfirmTarget.booking.id, manualReason.trim());
+      showToast(
+        res.ok
+          ? `Manual boarding recorded: ${manualConfirmTarget.user?.name || 'Passenger'} (Seat ${manualConfirmTarget.booking.seatId}).`
+          : `Not allowed: ${res.message}`
+      );
     }
 
     setManualConfirmTarget(null);
@@ -359,11 +391,13 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     }
 
     if (pendingManualStatusAction && assignedTripId) {
-      onManualSetTripStatus(assignedTripId, pendingManualStatusAction);
-      if (pendingManualStatusAction === 'ARRIVED') {
-        showToast('Bus Arrived: 2-minute departure countdown started! Passengers can scan to depart.');
+      const res = onManualSetTripStatus(assignedTripId, pendingManualStatusAction);
+      if (!res.ok) {
+        showToast(`Not allowed: ${res.message}`);
+      } else if (pendingManualStatusAction === 'ARRIVED') {
+        showToast('Shuttle arrived: boarding is open. Passengers can scan their QR pass.');
       } else {
-        showToast('Bus Departed: Passengers checked-in who did not scan to depart penalized 2 scores.');
+        showToast('Shuttle departed: checked-in passengers who did not scan are marked No-show (+2 points).');
       }
     }
 
@@ -952,6 +986,69 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
           </div>
         </div>
 
+        {/* QR SCANNER: the only normal way to board. Shows who the pass belongs to. */}
+        <div className="mt-2 p-2 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 space-y-1.5">
+          <div className="flex items-center justify-between text-[10px] font-mono uppercase font-bold">
+            <span className="text-zinc-600 dark:text-zinc-300">QR pass scanner · {activeInspectionTrip.departureTime}</span>
+            <span className={activeInspectionTrip.boardingOpen ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-500'}>
+              {activeInspectionTrip.boardingOpen ? 'Boarding open' : 'Boarding closed'}
+            </span>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              runScan(scanInput);
+            }}
+            className="flex gap-1.5"
+          >
+            <input
+              type="text"
+              value={scanInput}
+              onChange={(e) => setScanInput(e.target.value)}
+              placeholder="QR token, e.g. APB-K7M2-9QXA-4TBC"
+              aria-label="QR token"
+              className="flex-1 min-w-0 px-2 py-1.5 rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-xs font-mono text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:border-emerald-500"
+            />
+            <button type="submit" className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shrink-0">
+              Scan
+            </button>
+          </form>
+          {scanResult && (
+            <div
+              className={`p-2 rounded border text-xs ${
+                scanResult.success
+                  ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                  : 'bg-rose-50 dark:bg-rose-950/50 border-rose-300 dark:border-rose-900 text-rose-900 dark:text-rose-200'
+              }`}
+              role="status"
+            >
+              <div className="font-bold flex items-center gap-1">
+                {scanResult.success ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+                <span>{scanResult.success ? 'ACCEPTED' : 'REJECTED'} · {scanResult.message}</span>
+              </div>
+              {scanResult.passenger && (
+                <div className="mt-1 flex items-center gap-2">
+                  {scanResult.passenger.avatar && (
+                    <img src={scanResult.passenger.avatar} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                  )}
+                  <div className="font-mono text-[10px] leading-snug">
+                    <div className="font-bold text-[11px]">{scanResult.passenger.name}</div>
+                    <div>
+                      {scanResult.passenger.studentId} · Booking {scanResult.passenger.bookingId}
+                    </div>
+                    <div>
+                      Seat {scanResult.passenger.seatId} · {scanResult.passenger.departureTime} shuttle
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <p className="text-[9px] font-mono text-zinc-500">
+            Only the QR token is accepted. TP number and booking ID are displayed to confirm identity, never used as a pass.
+          </p>
+        </div>
+
         {/* Notification on Passengers Who Haven't Got In */}
         <div className="mt-2">
           {metrics.waitingOutsideCount > 0 ? (
@@ -1041,6 +1138,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                   {['A', 'B'].map((col) => {
                     const seatId = `${row}${col}`;
                     const seatData = seatStatusMap.get(seatId);
+                    const otherPassenger = !seatData && activeInspectionTrip.bookedSeatIds.includes(seatId);
                     const isCheckedIn = seatData?.booking.status === 'CHECKED_IN' || seatData?.booking.status === 'NO_SHOW';
                     const isBoarded = seatData?.booking.status === 'BOARDED';
                     const isReserved = seatData?.booking.status === 'RESERVED';
@@ -1051,7 +1149,11 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                         onClick={() =>
                           seatData
                             ? handleInitiateManualBoarding(seatData.booking, seatData.user)
-                            : showToast(`Seat ${seatId} is Empty & Available`)
+                            : showToast(
+                                otherPassenger
+                                  ? `Seat ${seatId}: booked by another passenger (not one of the demo personas)`
+                                  : `Seat ${seatId} is Empty & Available`
+                              )
                         }
                         className={`w-8 h-8 rounded text-xs font-mono font-bold flex items-center justify-center transition border ${
                           isBoarded
@@ -1060,6 +1162,8 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                             ? 'bg-rose-600 text-white border-rose-600 animate-pulse shadow-xs'
                             : isReserved
                             ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700'
+                            : otherPassenger
+                            ? 'bg-zinc-200/70 dark:bg-zinc-800/70 text-zinc-500 dark:text-zinc-400 border-zinc-300 dark:border-zinc-700 border-dashed'
                             : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
                         }`}
                         title={
@@ -1084,6 +1188,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                   {['C', 'D'].map((col) => {
                     const seatId = `${row}${col}`;
                     const seatData = seatStatusMap.get(seatId);
+                    const otherPassenger = !seatData && activeInspectionTrip.bookedSeatIds.includes(seatId);
                     const isCheckedIn = seatData?.booking.status === 'CHECKED_IN' || seatData?.booking.status === 'NO_SHOW';
                     const isBoarded = seatData?.booking.status === 'BOARDED';
                     const isReserved = seatData?.booking.status === 'RESERVED';
@@ -1094,7 +1199,11 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                         onClick={() =>
                           seatData
                             ? handleInitiateManualBoarding(seatData.booking, seatData.user)
-                            : showToast(`Seat ${seatId} is Empty & Available`)
+                            : showToast(
+                                otherPassenger
+                                  ? `Seat ${seatId}: booked by another passenger (not one of the demo personas)`
+                                  : `Seat ${seatId} is Empty & Available`
+                              )
                         }
                         className={`w-8 h-8 rounded text-xs font-mono font-bold flex items-center justify-center transition border ${
                           isBoarded
@@ -1103,6 +1212,8 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                             ? 'bg-rose-600 text-white border-rose-600 animate-pulse shadow-xs'
                             : isReserved
                             ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700'
+                            : otherPassenger
+                            ? 'bg-zinc-200/70 dark:bg-zinc-800/70 text-zinc-500 dark:text-zinc-400 border-zinc-300 dark:border-zinc-700 border-dashed'
                             : 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 border-zinc-200 dark:border-zinc-800 hover:border-zinc-400'
                         }`}
                         title={
@@ -1155,20 +1266,31 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                       <div>
                         <div className="font-bold text-zinc-900 dark:text-white leading-tight">{u?.name || 'Passenger'}</div>
                         <div className="text-[10px] text-zinc-500 font-mono">
-                          {u?.studentId} · {b.status}
+                          {u?.studentId} · {b.id} · {b.status}
                         </div>
                       </div>
                     </div>
 
                     <div>
                       {b.status === 'CHECKED_IN' || b.status === 'NO_SHOW' ? (
-                        <button
-                          onClick={() => handleInitiateManualBoarding(b, u)}
-                          className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-mono font-bold shadow-2xs animate-pulse"
-                          title="QR code not working or passed trip? Manually confirm attendance with driver PIN (1234)."
-                        >
-                          {b.status === 'NO_SHOW' ? 'Manual Check (1234)' : 'Confirm Inside (Enter 1234)'}
-                        </button>
+                        <div className="flex items-center gap-1">
+                          {b.status === 'CHECKED_IN' && b.qrCodeToken && (
+                            <button
+                              onClick={() => runScan(b.qrCodeToken || '')}
+                              className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-mono font-bold shadow-2xs"
+                              title="Demo: simulates the camera reading this passenger's QR pass"
+                            >
+                              Scan QR
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleInitiateManualBoarding(b, u)}
+                            className="px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-mono font-bold shadow-2xs"
+                            title="QR cannot be scanned? Board manually with the driver PIN and a written reason. It is recorded in the log."
+                          >
+                            {b.status === 'NO_SHOW' ? 'Manual (reverse no-show)' : 'Manual (PIN + reason)'}
+                          </button>
+                        </div>
                       ) : b.status === 'BOARDED' ? (
                         <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-bold px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800">
                           Inside
@@ -1351,9 +1473,27 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                 <span className="text-zinc-800 dark:text-zinc-200">{manualConfirmTarget.booking.routeName}</span>
               </div>
               <div className="flex justify-between text-zinc-600 dark:text-zinc-400">
-                <span>Reason:</span>
-                <span className="text-amber-600 dark:text-amber-400">QR code not scanning / manual verification</span>
+                <span>Booking ID:</span>
+                <span className="text-zinc-800 dark:text-zinc-200">{manualConfirmTarget.booking.id}</span>
               </div>
+            </div>
+
+            <div>
+              <label htmlFor="manual-boarding-reason" className="text-[10px] uppercase font-mono text-zinc-600 dark:text-zinc-400 block mb-1">
+                Reason for boarding without a QR scan (required, logged)
+              </label>
+              <input
+                id="manual-boarding-reason"
+                type="text"
+                value={manualReason}
+                maxLength={120}
+                onChange={(e) => {
+                  setManualReason(e.target.value);
+                  setManualPinError(null);
+                }}
+                placeholder="e.g. Phone battery dead, APCard checked"
+                className="w-full text-xs py-2 px-2 rounded bg-zinc-50 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:border-emerald-500"
+              />
             </div>
 
             <form onSubmit={handleConfirmManualBoarding} className="space-y-3">

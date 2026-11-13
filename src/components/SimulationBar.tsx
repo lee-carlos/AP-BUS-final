@@ -22,6 +22,8 @@ interface SimulationBarProps {
   onToggleUserLocation: () => void;
   onOpenDriverConsole?: () => void;
   onResetDemo: () => void;
+  dayLabel?: string; // e.g. "Fri 13 Nov"
+  onNextServiceDay?: () => void;
 }
 
 export const SimulationBar: React.FC<SimulationBarProps> = ({
@@ -35,6 +37,8 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
   onToggleUserLocation,
   onOpenDriverConsole,
   onResetDemo,
+  dayLabel,
+  onNextServiceDay,
 }) => {
   return (
     <div className="bg-zinc-50 dark:bg-zinc-950 border-t border-zinc-200 dark:border-zinc-800 p-2.5 text-xs space-y-2 transition-colors">
@@ -82,19 +86,18 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
       {/* Scenario 19.2 Milestone Quick-Jumps: Sharp 6px Rectangles */}
       <div className="space-y-1">
         <div className="flex items-center justify-between text-[10px] text-zinc-500 dark:text-zinc-400 font-mono">
-          <span>HACKATHON MILESTONES:</span>
-          <span className="text-emerald-700 dark:text-emerald-400 font-bold">MYT: {simulatedTimeStr}</span>
+          <span>JUMP TO:</span>
+          <span className="text-emerald-700 dark:text-emerald-400 font-bold">{dayLabel ? `${dayLabel} · ` : ''}MYT {simulatedTimeStr}</span>
         </div>
 
         <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-0.5">
           {[
-            { label: '07:45 (On the Way)', value: '07:45', desc: 'Counting down · 15m' },
-            { label: '08:00 (Arrived)', value: '08:00', desc: 'Countdown 0 · 2m window' },
-            { label: '08:01 (Waiting)', value: '08:01', desc: 'Scan depart vs check-in' },
-            { label: '08:02 (Depart)', value: '08:02', desc: 'Departs · 2 score penalty' },
-            { label: '08:03 (Expired)', value: '08:03', desc: 'Bus section completed' },
-            { label: '07:20 (Not Available)', value: '07:20', desc: 'Before 30m window' },
-            { label: '07:50 (T-10 Cutoff)', value: '07:50', desc: 'Check-in cutoff' },
+            { label: '07:50 (T-10)', value: '07:50', desc: 'Budi expires · Dimas rejected' },
+            { label: '07:51 (Claim)', value: '07:51', desc: 'Citra claims the seat' },
+            { label: '08:00 (Arrived)', value: '08:00', desc: 'QR scans · Fajar hits 6 pts' },
+            { label: '08:02 (Depart)', value: '08:02', desc: 'Eka no-show · +2' },
+            { label: '08:12 (08:10 left)', value: '08:12', desc: 'Manual boarding logged' },
+            { label: '08:22 (Done)', value: '08:22', desc: 'All day-1 cases shown' },
           ].map((milestone) => (
             <button
               key={milestone.value}
@@ -115,7 +118,7 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
       </div>
 
       {/* Controls: Location, Driver Console & Reset (Sharp 6px buttons) */}
-      <div className="grid grid-cols-3 gap-1.5 pt-1 border-t border-zinc-200 dark:border-zinc-800">
+      <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-zinc-200 dark:border-zinc-800">
         <button
           onClick={onToggleUserLocation}
           className={`px-2 py-1 rounded-sm border flex items-center justify-center gap-1 text-[10px] font-semibold transition ${
@@ -126,7 +129,7 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
           title="Toggle between in-range and out-of-range location"
         >
           <MapPin className="w-3 h-3 shrink-0" />
-          <span className="truncate">{currentUser.isNearStop ? 'GPS: In Range (30m)' : 'GPS: Out (~9km)'}</span>
+          <span className="truncate">{currentUser.isNearStop ? 'Location: At stop (30m)' : 'Location: Away (~11km)'}</span>
         </button>
 
         <button
@@ -146,6 +149,17 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
           <RotateCcw className="w-3 h-3 shrink-0" />
           <span>Reset Demo</span>
         </button>
+
+        {onNextServiceDay && (
+          <button
+            onClick={onNextServiceDay}
+            className="px-2 py-1 rounded-sm bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-1 text-[10px] font-bold transition"
+            title="Start the next service day (Mon-Fri). Bookings start fresh, penalty points carry over, so a one-day restriction can be seen starting and ending."
+          >
+            <FastForward className="w-3 h-3 shrink-0" />
+            <span>Next service day</span>
+          </button>
+        )}
       </div>
     </div>
   );

@@ -1,20 +1,27 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { BusStop, BusTrip, Booking, DemoUser } from './types/bus';
-import { APU_STOPS, INITIAL_TRIPS, DEMO_ACCOUNTS } from './data/apuRoutes';
+import { BusStop, BusTrip, Booking, ScanResult } from './types/bus';
+import { APU_STOPS } from './data/apuRoutes';
+import { isBookingWindowOpen, formatServiceDay } from './utils/bookingRules';
+import type { SimState, ActionResult } from './utils/simEngine';
 import {
-  evaluateCheckInAssessment,
-  isBookingWindowOpen,
-  isNormalBookingOpen,
-  isClaimWindowOpen,
-  getMinutesUntilDeparture,
-  validateClaimEligibility,
-  validateBookingEligibility,
-  calculateTripCapacity,
-  evaluateCancellationPenalty,
-  evaluateAutoExpiryPenalty,
-  evaluateNoShowPenalty,
-  PENALTY_SYSTEM,
-} from './utils/bookingRules';
+  createInitialState,
+  advanceTo,
+  book,
+  cancel,
+  checkIn,
+  claim,
+  scanPass,
+  manualBoard,
+  setBoarding,
+  setTripStatus,
+  setUserLocation,
+  toggleNotify,
+  toggleSeatAlert,
+  setAutoplay,
+  startNextServiceDay,
+  findClaimOffer,
+  shortName,
+} from './utils/simEngine';
 import { PhoneShell } from './components/PhoneShell';
 import { DemoAccountSelector } from './components/DemoAccountSelector';
 import { TopBar } from './components/TopBar';
@@ -31,11 +38,17 @@ import { SearchModal } from './components/SearchModal';
 import { ScheduleDocModal } from './components/ScheduleDocModal';
 import { DriverConsoleModal } from './components/DriverConsoleModal';
 import { DriverPortal } from './components/DriverPortal';
-import { Bus, BellRing, Sparkles, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { ScenarioLogPanel } from './components/ScenarioLogPanel';
+import { Bus, BellRing, CheckCircle2, AlertTriangle } from 'lucide-react';
+
+type NoticeType = 'info' | 'success' | 'warning' | 'alert';
 
 export default function App() {
-  // All personas in system (allows live mutation of penalties & coordinates across switches)
-  const [users, setUsers] = useState<DemoUser[]>(DEMO_ACCOUNTS);
+  // The whole simulation (users, trips, bookings, penalties, scenario log) lives in ONE state
+  // object. Every rule is applied by the pure functions in utils/simEngine.ts.
+  const [sim, setSim] = useState<SimState>(() => createInitialState());
+  const { users, trips } = sim;
+  const simulatedTimeStr = sim.time;
 
   // Active persona (null = initial persona selection screen)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -64,494 +77,9 @@ export default function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  // Trips with live status and capacity
-  const [trips, setTrips] = useState<BusTrip[]>(INITIAL_TRIPS);
-
-  // Section 19.2 Initial State:
-  // - Bus A (08:00, cap 2): Sarah Tan (1A, CHECKED_IN), Ryan Lim (1B, RESERVED, no QR)
-  // - Bus B (08:10, cap 40): Rani Pratama (1A, RESERVED), Amir Hakim (1B, RESERVED)
-  const [userBookings, setUserBookings] = useState<Record<string, Booking[]>>({
-    'user-sarah': [
-      {
-        id: 'bk-sarah-demo-a',
-        userId: 'user-sarah',
-        tripId: 'demo-a-0800',
-        seatId: '1A',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus A)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:00',
-        notify30Min: true,
-        status: 'CHECKED_IN',
-        checkedInAt: '07:42',
-        bookedAt: '07:30',
-        qrCodeToken: 'APU-PASS-TP068412-DEMOA-1A',
-      },
-    ],
-    'user-ryan': [
-      {
-        id: 'bk-ryan-demo-a',
-        userId: 'user-ryan',
-        tripId: 'demo-a-0800',
-        seatId: '1B',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus A)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:00',
-        notify30Min: true,
-        status: 'RESERVED', // Rule 9.1: No QR issued before check-in!
-        bookedAt: '07:32',
-      },
-    ],
-    'user-rani': [
-      {
-        id: 'bk-rani-demo-b',
-        userId: 'user-rani',
-        tripId: 'demo-b-0810',
-        seatId: '1A',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'RESERVED',
-        bookedAt: '07:34',
-      },
-    ],
-    'user-amir': [
-      {
-        id: 'bk-amir-demo-b',
-        userId: 'user-amir',
-        tripId: 'demo-b-0810',
-        seatId: '1B',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'RESERVED',
-        bookedAt: '07:35',
-      },
-    ],
-    'staff-daniel': [
-      {
-        id: 'bk-daniel-demo-b',
-        userId: 'staff-daniel',
-        tripId: 'demo-b-0810',
-        seatId: '2A',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'CHECKED_IN',
-        checkedInAt: '07:40',
-        bookedAt: '07:25',
-        qrCodeToken: 'APU-PASS-LEC4011-DEMOB-2A',
-      },
-    ],
-    'user-chloe': [
-      {
-        id: 'bk-chloe-demo-b',
-        userId: 'user-chloe',
-        tripId: 'demo-b-0810',
-        seatId: '2B',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: false,
-        status: 'BOARDED',
-        boardedAt: '07:44',
-        checkedInAt: '07:38',
-        bookedAt: '07:10',
-        qrCodeToken: 'APU-PASS-TP065123-DEMOB-2B',
-      },
-    ],
-    'user-farhan': [
-      {
-        id: 'bk-farhan-demo-b',
-        userId: 'user-farhan',
-        tripId: 'demo-b-0810',
-        seatId: '2C',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'CHECKED_IN',
-        checkedInAt: '07:41',
-        bookedAt: '07:15',
-        qrCodeToken: 'APU-PASS-TP071002-DEMOB-2C',
-      },
-    ],
-    'user-navin': [
-      {
-        id: 'bk-navin-demo-b',
-        userId: 'user-navin',
-        tripId: 'demo-b-0810',
-        seatId: '2D',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: false,
-        status: 'BOARDED',
-        boardedAt: '07:43',
-        checkedInAt: '07:39',
-        bookedAt: '07:18',
-        qrCodeToken: 'APU-PASS-TP069844-DEMOB-2D',
-      },
-    ],
-    'user-aisyah': [
-      {
-        id: 'bk-aisyah-demo-b',
-        userId: 'user-aisyah',
-        tripId: 'demo-b-0810',
-        seatId: '3A',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'BOARDED',
-        boardedAt: '07:44',
-        checkedInAt: '07:35',
-        bookedAt: '07:05',
-        qrCodeToken: 'APU-PASS-TP072341-DEMOB-3A',
-      },
-    ],
-    'user-weijian': [
-      {
-        id: 'bk-weijian-demo-b',
-        userId: 'user-weijian',
-        tripId: 'demo-b-0810',
-        seatId: '3B',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: false,
-        status: 'CHECKED_IN',
-        checkedInAt: '07:42',
-        bookedAt: '07:12',
-        qrCodeToken: 'APU-PASS-TP070192-DEMOB-3B',
-      },
-    ],
-    'admin-alex': [
-      {
-        id: 'bk-alex-demo-b',
-        userId: 'admin-alex',
-        tripId: 'demo-b-0810',
-        seatId: '3C',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'BOARDED',
-        boardedAt: '07:43',
-        checkedInAt: '07:37',
-        bookedAt: '07:08',
-        qrCodeToken: 'APU-PASS-LEC1019-DEMOB-3C',
-      },
-    ],
-    'user-priya': [
-      {
-        id: 'bk-priya-demo-b',
-        userId: 'user-priya',
-        tripId: 'demo-b-0810',
-        seatId: '3D',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: false,
-        status: 'BOARDED',
-        boardedAt: '07:44',
-        checkedInAt: '07:36',
-        bookedAt: '07:11',
-        qrCodeToken: 'APU-PASS-TP068991-DEMOB-3D',
-      },
-    ],
-    'user-hassan': [
-      {
-        id: 'bk-hassan-demo-b',
-        userId: 'user-hassan',
-        tripId: 'demo-b-0810',
-        seatId: '4A',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'CHECKED_IN',
-        checkedInAt: '07:41',
-        bookedAt: '07:20',
-        qrCodeToken: 'APU-PASS-TP075412-DEMOB-4A',
-      },
-    ],
-    'user-elena': [
-      {
-        id: 'bk-elena-demo-b',
-        userId: 'user-elena',
-        tripId: 'demo-b-0810',
-        seatId: '4B',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'BOARDED',
-        boardedAt: '07:42',
-        checkedInAt: '07:38',
-        bookedAt: '07:16',
-        qrCodeToken: 'APU-PASS-TP073884-DEMOB-4B',
-      },
-    ],
-    'user-kevin': [
-      {
-        id: 'bk-kevin-demo-b',
-        userId: 'user-kevin',
-        tripId: 'demo-b-0810',
-        seatId: '4C',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: false,
-        status: 'RESERVED',
-        bookedAt: '07:22',
-      },
-    ],
-    'user-nabilah': [
-      {
-        id: 'bk-nabilah-demo-b',
-        userId: 'user-nabilah',
-        tripId: 'demo-b-0810',
-        seatId: '4D',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'BOARDED',
-        boardedAt: '07:44',
-        checkedInAt: '07:35',
-        bookedAt: '07:09',
-        qrCodeToken: 'APU-PASS-TP072890-DEMOB-4D',
-      },
-    ],
-    'user-lucas': [
-      {
-        id: 'bk-lucas-demo-b',
-        userId: 'user-lucas',
-        tripId: 'demo-b-0810',
-        seatId: '5A',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'CHECKED_IN',
-        checkedInAt: '07:43',
-        bookedAt: '07:24',
-        qrCodeToken: 'APU-PASS-TP069114-DEMOB-5A',
-      },
-    ],
-    'user-zulkhairi': [
-      {
-        id: 'bk-zulkhairi-demo-b',
-        userId: 'user-zulkhairi',
-        tripId: 'demo-b-0810',
-        seatId: '5B',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: false,
-        status: 'BOARDED',
-        boardedAt: '07:41',
-        checkedInAt: '07:37',
-        bookedAt: '07:13',
-        qrCodeToken: 'APU-PASS-TP070445-DEMOB-5B',
-      },
-    ],
-    'user-siddharth': [
-      {
-        id: 'bk-siddharth-demo-b',
-        userId: 'user-siddharth',
-        tripId: 'demo-b-0810',
-        seatId: '5C',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: false,
-        status: 'RESERVED',
-        bookedAt: '07:19',
-      },
-    ],
-    'user-fatimah': [
-      {
-        id: 'bk-fatimah-demo-b',
-        userId: 'user-fatimah',
-        tripId: 'demo-b-0810',
-        seatId: '5D',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'BOARDED',
-        boardedAt: '07:42',
-        checkedInAt: '07:38',
-        bookedAt: '07:15',
-        qrCodeToken: 'APU-PASS-TP071882-DEMOB-5D',
-      },
-    ],
-    'user-darren': [
-      {
-        id: 'bk-darren-demo-b',
-        userId: 'user-darren',
-        tripId: 'demo-b-0810',
-        seatId: '6A',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: false,
-        status: 'CHECKED_IN',
-        checkedInAt: '07:40',
-        bookedAt: '07:18',
-        qrCodeToken: 'APU-PASS-TP068331-DEMOB-6A',
-      },
-    ],
-    'user-ananya': [
-      {
-        id: 'bk-ananya-demo-b',
-        userId: 'user-ananya',
-        tripId: 'demo-b-0810',
-        seatId: '6B',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'BOARDED',
-        boardedAt: '07:43',
-        checkedInAt: '07:37',
-        bookedAt: '07:14',
-        qrCodeToken: 'APU-PASS-TP073229-DEMOB-6B',
-      },
-    ],
-    'user-jason': [
-      {
-        id: 'bk-jason-demo-b',
-        userId: 'user-jason',
-        tripId: 'demo-b-0810',
-        seatId: '6C',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: false,
-        status: 'RESERVED',
-        bookedAt: '07:23',
-      },
-    ],
-    'user-nurul': [
-      {
-        id: 'bk-nurul-demo-b',
-        userId: 'user-nurul',
-        tripId: 'demo-b-0810',
-        seatId: '6D',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'BOARDED',
-        boardedAt: '07:44',
-        checkedInAt: '07:36',
-        bookedAt: '07:12',
-        qrCodeToken: 'APU-PASS-TP072661-DEMOB-6D',
-      },
-    ],
-    'user-tariq': [
-      {
-        id: 'bk-tariq-demo-b',
-        userId: 'user-tariq',
-        tripId: 'demo-b-0810',
-        seatId: '7A',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: false,
-        status: 'CHECKED_IN',
-        checkedInAt: '07:39',
-        bookedAt: '07:17',
-        qrCodeToken: 'APU-PASS-TP075019-DEMOB-7A',
-      },
-    ],
-    'user-grace': [
-      {
-        id: 'bk-grace-demo-b',
-        userId: 'user-grace',
-        tripId: 'demo-b-0810',
-        seatId: '7B',
-        routeId: 'lrt',
-        routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-        fromStopName: 'LRT Bukit Jalil',
-        toStopName: 'Asia Pacific University (APU Campus)',
-        departureTime: '08:10',
-        notify30Min: true,
-        status: 'BOARDED',
-        boardedAt: '07:43',
-        checkedInAt: '07:38',
-        bookedAt: '07:15',
-        qrCodeToken: 'APU-PASS-TP069550-DEMOB-7B',
-      },
-    ],
-  });
-
-  // Seat Alert Subscriptions (User IDs subscribed to Trip IDs)
-  const [seatAlerts, setSeatAlerts] = useState<Record<string, string[]>>({
-    'demo-a-0800': ['user-rani', 'user-amir'],
-  });
-
   // Route Filter state
   const [selectedFrom, setSelectedFrom] = useState<BusStop | null>(APU_STOPS[1]); // LRT Bukit Jalil
   const [selectedTo, setSelectedTo] = useState<BusStop | null>(APU_STOPS[0]); // APU Campus
-
-  // Simulated Time (HH:mm) - Initialized at 07:45 MYT (Section 19.2 Start)
-  const [simulatedTimeStr, setSimulatedTimeStr] = useState<string>('07:45');
 
   // Continuous Auto-Tick Clock Engine
   const [isAutoTickRunning, setIsAutoTickRunning] = useState<boolean>(false);
@@ -561,7 +89,7 @@ export default function App() {
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
   const [seatPickerTrip, setSeatPickerTrip] = useState<BusTrip | null>(null);
   const [cancelingBooking, setCancelingBooking] = useState<Booking | null>(null);
-  const [selectedBookingForPass, setSelectedBookingForPass] = useState<Booking | null>(null);
+  const [passBookingId, setPassBookingId] = useState<string | null>(null);
   const [isBoardingPassOpen, setIsBoardingPassOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
@@ -569,19 +97,15 @@ export default function App() {
   const [driverTripId, setDriverTripId] = useState<string>('demo-a-0800');
   const [showSimulator, setShowSimulator] = useState(true);
 
+  // Seat Alert offers the current user chose to ignore ("Keep Current Bus")
+  const [dismissedOffers, setDismissedOffers] = useState<string[]>([]);
+
   // System Live Toast / Banner
   const [bannerNotice, setBannerNotice] = useState<{
     id: string;
     title: string;
     message: string;
-    type: 'info' | 'success' | 'warning' | 'alert';
-  } | null>(null);
-
-  // FCFS Claim Offer Modal state
-  const [standbyOffer, setStandbyOffer] = useState<{
-    trip: BusTrip;
-    seatId: string;
-    sourceBooking: Booking | null;
+    type: NoticeType;
   } | null>(null);
 
   // Google Maps Quota handling
@@ -599,219 +123,107 @@ export default function App() {
     return users.find((u) => u.id === currentUserId) || null;
   }, [currentUserId, users]);
 
-  // Current user's bookings
+  // Current user's bookings (cancelled ones are hidden, expired / no-show stay visible)
   const currentUserBookings = useMemo(() => {
     if (!currentUser) return [];
-    return userBookings[currentUser.id] || [];
-  }, [currentUser, userBookings]);
+    const rank = (b: Booking) => (b.status === 'RESERVED' || b.status === 'CHECKED_IN' || b.status === 'BOARDED' ? 0 : 1);
+    // Active bookings first (earliest departure first), then expired / transferred / no-show ones
+    return sim.bookings
+      .filter((b) => b.userId === currentUser.id && b.status !== 'CANCELLED')
+      .sort((a, b) => rank(a) - rank(b) || a.departureTime.localeCompare(b.departureTime));
+  }, [currentUser, sim.bookings]);
 
-  // All bookings flattened (for Driver manifest and capacity)
-  const allBookingsFlat = useMemo(() => {
-    return Object.values(userBookings).flat();
-  }, [userBookings]);
+  // All bookings (for Driver manifest and capacity)
+  const allBookingsFlat = useMemo(() => sim.bookings.filter((b) => b.status !== 'CANCELLED'), [sim.bookings]);
 
-  // Booking window open status (06:00 MYT Master Context)
-  const isBookingOpen = useMemo(() => {
-    return isBookingWindowOpen(simulatedTimeStr);
-  }, [simulatedTimeStr]);
+  // The pass shown in the boarding pass modal always reflects the live booking
+  const selectedBookingForPass = useMemo(
+    () => (passBookingId ? sim.bookings.find((b) => b.id === passBookingId) || null : null),
+    [passBookingId, sim.bookings]
+  );
+
+  // Trips where the current user has a Seat Alert
+  const myAlertTripIds = useMemo(() => {
+    if (!currentUser) return [];
+    return Object.entries(sim.seatAlerts)
+      .filter(([, ids]) => ids.includes(currentUser.id))
+      .map(([tripId]) => tripId);
+  }, [currentUser, sim.seatAlerts]);
+
+  // Seat Alert offer: a subscribed shuttle has a free seat AND the user holds the next schedule
+  const standbyOffer = useMemo(() => {
+    if (!currentUser || currentUser.role === 'Driver') return null;
+    return findClaimOffer(sim, currentUser.id, dismissedOffers);
+  }, [sim, currentUser, dismissedOffers]);
+
+  // Booking window open status (06:00 MYT)
+  const isBookingOpen = useMemo(() => isBookingWindowOpen(simulatedTimeStr), [simulatedTimeStr]);
+
+  const serviceDayLabel = formatServiceDay(sim.day);
+  const actorName = currentUser?.role === 'Driver' ? shortName(currentUser) : 'Door scanner';
 
   // Show banner notice helper
-  const showNotice = (
-    title: string,
-    message: string,
-    type: 'info' | 'success' | 'warning' | 'alert' = 'info'
-  ) => {
+  const showNotice = (title: string, message: string, type: NoticeType = 'info') => {
     setBannerNotice({ id: String(Date.now()), title, message, type });
     setTimeout(() => {
       setBannerNotice((prev) => (prev?.title === title ? null : prev));
     }, 6000);
   };
 
-  // Automated Deadline Processing (Server Auto-Tick Logic)
-  // Evaluates every time the simulated clock updates
-  const processAutomatedDeadlines = useCallback(
-    (currentTime: string) => {
-      // 1. Check all trips for T-10 check-in deadline expiration
-      trips.forEach((trip) => {
-        const minsUntil = getMinutesUntilDeparture(currentTime, trip.departureTime);
+  // Log entries already announced in the banner. Manual actions announce their own result,
+  // clock-driven events (expiry, departure, scripted persona actions) are announced below.
+  const announcedLogLen = useRef(sim.log.length);
 
-        // If at or past T-10, expire any un-checked-in RESERVED bookings
-        if (minsUntil <= 10 && minsUntil >= -30) {
-          Object.entries(userBookings).forEach(([userId, bList]) => {
-            bList.forEach((b) => {
-              if (b.tripId === trip.id && b.status === 'RESERVED') {
-                // Auto-expire booking
-                setUserBookings((prev) => ({
-                  ...prev,
-                  [userId]: (prev[userId] || []).map((item) =>
-                    item.id === b.id
-                      ? { ...item, status: 'EXPIRED' as const, expiredAt: currentTime }
-                      : item
-                  ),
-                }));
+  const commit = (next: SimState) => {
+    announcedLogLen.current = next.log.length;
+    setSim(next);
+  };
 
-                // Release seat from trip
-                setTrips((prevTrips) =>
-                  prevTrips.map((t) =>
-                    t.id === trip.id
-                      ? { ...t, bookedSeatIds: t.bookedSeatIds.filter((s) => s !== b.seatId) }
-                      : t
-                  )
-                );
+  const apply = (result: ActionResult): ActionResult => {
+    commit(result.state);
+    showNotice(result.title, result.message, result.ok ? 'success' : 'alert');
+    return result;
+  };
 
-                // Add 1 Minor penalty point to user (Section 8.1 & 8.2)
-                const penaltyEval = evaluateAutoExpiryPenalty(b);
-                setUsers((prevUsers) =>
-                  prevUsers.map((u) => {
-                    if (u.id === userId) {
-                      const newMinors = u.minorPenalties + penaltyEval.minorPoints;
-                      const newTotal = u.penaltyPoints + penaltyEval.points;
-                      return {
-                        ...u,
-                        minorPenalties: newMinors,
-                        penaltyPoints: newTotal,
-                        penaltyStrikes: Math.floor(newTotal / 2),
-                        isRestricted: newTotal >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD,
-                      };
-                    }
-                    return u;
-                  })
-                );
+  useEffect(() => {
+    if (sim.log.length < announcedLogLen.current) {
+      announcedLogLen.current = sim.log.length; // demo was reset
+      return;
+    }
+    if (sim.log.length === announcedLogLen.current) return;
+    const fresh = sim.log.slice(announcedLogLen.current);
+    announcedLogLen.current = sim.log.length;
+    const pick = [...fresh].reverse().find((l) => l.kind !== 'info') || fresh[fresh.length - 1];
+    const type: NoticeType = pick.kind === 'reject' ? 'alert' : pick.kind === 'penalty' ? 'warning' : pick.kind === 'success' ? 'success' : 'info';
+    showNotice(`${pick.time} · ${pick.actor}`, pick.text, type);
+  }, [sim.log]);
 
-                // Notify with banner
-                const targetUser = users.find((u) => u.id === userId);
-                showNotice(
-                  'T-10 Expiry Auto-Tick',
-                  `${targetUser?.name || 'Passenger'} (Seat ${b.seatId}) failed to check in by T-10 (${trip.departureTime}). Seat released! 1 Minor penalty issued.`,
-                  'warning'
-                );
-
-                // Trigger Seat Alert for eligible subscribers (FCFS Claim)
-                const subscribers = seatAlerts[trip.id] || [];
-                if (subscribers.length > 0) {
-                  // If current logged-in user is an eligible subscriber, trigger FCFS Claim modal
-                  if (currentUser && subscribers.includes(currentUser.id)) {
-                    // Find user's subsequent booking
-                    const userSubsequentBooking = (userBookings[currentUser.id] || []).find(
-                      (ub) => ub.routeId === trip.routeId && ub.status === 'RESERVED'
-                    );
-
-                    setStandbyOffer({
-                      trip,
-                      seatId: b.seatId,
-                      sourceBooking: userSubsequentBooking || null,
-                    });
-                  }
-                }
-              }
-            });
-          });
-        }
-
-        // 2. Bus Arrival, Waiting (2m) & Departure / 2 Score Penalty:
-        // When countdown reaches 0: Bus has Arrived at stop
-        if (minsUntil === 0 && trip.tripStatus !== 'ARRIVED' && trip.tripStatus !== 'DEPARTED' && trip.tripStatus !== 'CANCELLED') {
-          setTrips((prevTrips) =>
-            prevTrips.map((t) =>
-              t.id === trip.id ? { ...t, tripStatus: 'ARRIVED' as const, boardingOpen: true } : t
-            )
-          );
-          showNotice(
-            'Bus Arrived 🚌',
-            `${trip.routeName} has arrived! 2-minute departure window open. Scan for depart to board now.`,
-            'info'
-          );
-        }
-
-        // When minsUntil === -1: Bus is Waiting at bay (minute 1 of 2m waiting)
-        if (minsUntil === -1 && trip.tripStatus !== 'WAITING' && trip.tripStatus !== 'DEPARTED' && trip.tripStatus !== 'CANCELLED') {
-          setTrips((prevTrips) =>
-            prevTrips.map((t) =>
-              t.id === trip.id ? { ...t, tripStatus: 'WAITING' as const, boardingOpen: true } : t
-            )
-          );
-        }
-
-        // When minsUntil <= -2: 2 minutes for waiting have elapsed -> Bus DEPARTS!
-        // Any student who just checked in but did not scan for depart receives the 2 score penalty!
-        if (minsUntil <= -2 && trip.tripStatus !== 'DEPARTED' && trip.tripStatus !== 'COMPLETED' && trip.tripStatus !== 'CANCELLED') {
-          // Update trip status to DEPARTED
-          setTrips((prevTrips) =>
-            prevTrips.map((t) =>
-              t.id === trip.id ? { ...t, tripStatus: 'DEPARTED' as const, boardingOpen: false } : t
-            )
-          );
-
-          // Check for checked-in passengers who did not scan for depart
-          Object.entries(userBookings).forEach(([userId, bList]) => {
-            bList.forEach((b) => {
-              if (b.tripId === trip.id && b.status === 'CHECKED_IN') {
-                // Transition to NO_SHOW
-                setUserBookings((prev) => ({
-                  ...prev,
-                  [userId]: (prev[userId] || []).map((item) =>
-                    item.id === b.id ? { ...item, status: 'NO_SHOW' as const } : item
-                  ),
-                }));
-
-                // Apply 2-score penalty (1 Major = 2 pts)
-                const penaltyEval = evaluateNoShowPenalty(b, trip.tripStatus === 'DELAYED');
-                if (penaltyEval.points > 0) {
-                  setUsers((prevUsers) =>
-                    prevUsers.map((u) => {
-                      if (u.id === userId) {
-                        const newMajors = u.majorPenalties + penaltyEval.majorPoints;
-                        const newTotal = u.penaltyPoints + penaltyEval.points; // +2 score penalty
-                        return {
-                          ...u,
-                          majorPenalties: newMajors,
-                          penaltyPoints: newTotal,
-                          penaltyStrikes: Math.floor(newTotal / 2),
-                          isRestricted: newTotal >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD,
-                        };
-                      }
-                      return u;
-                    })
-                  );
-
-                  const targetUser = users.find((u) => u.id === userId);
-                  showNotice(
-                    'Bus Departed · 2 Score Penalty',
-                    `${targetUser?.name || 'Passenger'} checked in but did not scan for depart before bus departed. 2 score penalty applied!`,
-                    'alert'
-                  );
-                }
-              }
-            });
-          });
-        }
-      });
-    },
-    [trips, userBookings, users, currentUser, seatAlerts]
-  );
-
-  // Continuous Auto-Tick Timer Hook (1 minute simulated per 1000/tickSpeed ms)
+  // Continuous Auto-Tick Timer (1 simulated minute per 1000/tickSpeed ms). Each minute runs the
+  // automatic deadlines (T-10 expiry, arrival, departure) and the scripted persona actions.
   useEffect(() => {
     if (!isAutoTickRunning) return;
 
     const interval = setInterval(() => {
-      setSimulatedTimeStr((prevTime) => {
-        const [h, m] = prevTime.split(':').map(Number);
-        const totalMins = h * 60 + m + 1;
-        const nextH = Math.floor(totalMins / 60) % 24;
-        const nextM = totalMins % 60;
-        const formatted = `${String(nextH).padStart(2, '0')}:${String(nextM).padStart(2, '0')}`;
-        return formatted;
+      setSim((prev) => {
+        if (prev.time === '23:59') return prev;
+        const [h, m] = prev.time.split(':').map(Number);
+        const total = h * 60 + m + 1;
+        const next = `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+        return advanceTo(prev, next);
       });
     }, 1000 / tickSpeed);
 
     return () => clearInterval(interval);
   }, [isAutoTickRunning, tickSpeed]);
 
-  // Run automated deadline check whenever simulatedTimeStr changes
   useEffect(() => {
-    processAutomatedDeadlines(simulatedTimeStr);
-  }, [simulatedTimeStr, processAutomatedDeadlines]);
+    if (simulatedTimeStr === '23:59' && isAutoTickRunning) setIsAutoTickRunning(false);
+  }, [simulatedTimeStr, isAutoTickRunning]);
+
+  // Quick-jump: going forward processes every minute in between
+  const handleSetTime = (timeStr: string) => {
+    setSim((prev) => advanceTo(prev, timeStr));
+  };
 
   // Handle route reversal (swap button)
   const handleSwapStops = useCallback(() => {
@@ -823,700 +235,157 @@ export default function App() {
 
   // Toggle 30m Notification
   const handleToggleNotify30 = (bookingId: string) => {
-    if (!currentUser) return;
-    setUserBookings((prev) => ({
-      ...prev,
-      [currentUser.id]: (prev[currentUser.id] || []).map((b) =>
-        b.id === bookingId ? { ...b, notify30Min: !b.notify30Min } : b
-      ),
-    }));
+    commit(toggleNotify(sim, bookingId));
   };
 
-  // Check-In Now via GPS Assessment (T-30 to T-10 & Physical Proximity)
+  // Check-in: time window T-30 to before T-10, and the user must be at the pickup point.
+  // The single-use QR pass is issued only here (or by a successful Claim).
   const handleCheckInNow = (bookingId: string) => {
     if (!currentUser) return;
-
-    const booking = currentUserBookings.find((b) => b.id === bookingId);
-    if (!booking) return;
-
-    const fromStop = APU_STOPS.find((s) => s.name === booking.fromStopName) || APU_STOPS[1];
-    const assessment = evaluateCheckInAssessment({
-      currentTimeStr: simulatedTimeStr,
-      departureTimeStr: booking.departureTime,
-      userCoord: currentUser.coords,
-      stopCoord: fromStop.coords,
-      fromStopId: fromStop.id,
-      alreadyCheckedIn: booking.status === 'CHECKED_IN' || booking.status === 'BOARDED',
-    });
-
-    if (!assessment.allowed) {
-      showNotice('Check-in Rejected', assessment.reason, 'alert');
-      return;
-    }
-
-    // Success! Generate secure digital QR token and update status to CHECKED_IN
-    const qrToken = `APU-PASS-${currentUser.studentId}-${booking.tripId}-${booking.seatId}`;
-    let updatedBooking: Booking | null = null;
-
-    setUserBookings((prev) => ({
-      ...prev,
-      [currentUser.id]: (prev[currentUser.id] || []).map((b) => {
-        if (b.id === bookingId) {
-          const updated: Booking = {
-            ...b,
-            status: 'CHECKED_IN',
-            checkedInAt: simulatedTimeStr,
-            qrCodeToken: qrToken,
-          };
-          updatedBooking = updated;
-          return updated;
-        }
-        return b;
-      }),
-    }));
-
-    showNotice(
-      'Check-in Verified!',
-      `GPS proximity confirmed within ${fromStop.name} radius. Boarding pass QR code unlocked.`,
-      'success'
-    );
-
-    if (updatedBooking) {
-      setSelectedBookingForPass(updatedBooking);
+    const result = apply(checkIn(sim, currentUser.id, bookingId));
+    if (result.ok && result.booking) {
+      setPassBookingId(result.booking.id);
       setIsBoardingPassOpen(true);
     }
   };
 
-  // Acknowledge student scan for depart (transitions CHECKED_IN to BOARDED, avoiding 2 score penalty)
+  // Demo stand-in for the door scanner reading this passenger's QR. It goes through the SAME
+  // validation as the driver scanner: right shuttle, boarding open, pass not used before.
   const handleScanForDepart = (bookingId: string) => {
-    let studentName = '';
-
-    setUserBookings((prev) => {
-      const next: Record<string, Booking[]> = {};
-      Object.keys(prev).forEach((uid) => {
-        next[uid] = (prev[uid] || []).map((b) => {
-          if (b.id === bookingId) {
-            const u = users.find((usr) => usr.id === uid);
-            if (u) studentName = u.name;
-            return {
-              ...b,
-              status: 'BOARDED' as const,
-              boardedAt: simulatedTimeStr,
-            };
-          }
-          return b;
-        });
-      });
-      return next;
-    });
-
-    setSelectedBookingForPass((prev) =>
-      prev && prev.id === bookingId ? { ...prev, status: 'BOARDED' as const, boardedAt: simulatedTimeStr } : prev
-    );
-
-    showNotice(
-      'Depart Scan Acknowledged',
-      `${studentName || 'Student'} scanned for depart and boarded bus safely. 0 penalty applied.`,
-      'success'
-    );
+    const booking = sim.bookings.find((b) => b.id === bookingId);
+    if (!booking || !booking.qrCodeToken) {
+      showNotice('No QR Pass', 'A QR pass is issued only after check-in.', 'alert');
+      return;
+    }
+    const { state, result } = scanPass(sim, booking.tripId, booking.qrCodeToken, 'Door scanner');
+    commit(state);
+    showNotice(result.success ? 'Boarding Verified' : 'Scan Rejected', result.message, result.success ? 'success' : 'alert');
   };
 
-  // Self Boarding Pass action
   const handleBoardBus = () => {
-    if (!currentUser || !selectedBookingForPass) return;
+    if (!selectedBookingForPass) return;
     handleScanForDepart(selectedBookingForPass.id);
   };
 
-  // Standard Seat Booking
+  // Standard Seat Booking (all rules are checked in the engine)
   const handleConfirmSeat = (tripId: string, seatId: string) => {
     if (!currentUser) return;
-
-    if (currentUser.isRestricted || currentUser.penaltyPoints >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD) {
-      showNotice(
-        'Privileges Suspended',
-        `Account reached ${currentUser.penaltyPoints}/6 penalty points. Booking is temporarily blocked.`,
-        'alert'
-      );
-      return;
-    }
-
+    const result = apply(book(sim, currentUser.id, tripId, seatId));
+    if (!result.ok) return;
     const trip = trips.find((t) => t.id === tripId);
-    if (!trip) return;
-
-    // Check if trip schedule has already passed
-    if (getMinutesUntilDeparture(simulatedTimeStr, trip.departureTime) < 0) {
-      showNotice(
-        'Not Available',
-        'The scheduled departure time for this bus has passed. Booking is closed and Not Available.',
-        'alert'
-      );
-      return;
+    if (trip) {
+      setSelectedFrom(APU_STOPS.find((s) => s.id === trip.fromStopId) || APU_STOPS[0]);
+      setSelectedTo(APU_STOPS.find((s) => s.id === trip.toStopId) || APU_STOPS[1]);
     }
-
-    // Check normal booking window (closes at T-10)
-    if (!isNormalBookingOpen(simulatedTimeStr, trip.departureTime)) {
-      showNotice(
-        'Booking Closed',
-        'Normal reservation closes strictly at T-10 minutes prior to departure.',
-        'alert'
-      );
-      return;
-    }
-
-    const fromStop = APU_STOPS.find((s) => s.id === trip.fromStopId) || APU_STOPS[0];
-    const toStop = APU_STOPS.find((s) => s.id === trip.toStopId) || APU_STOPS[1];
-
-    // Enforce 1 active seat per route in a day (no 2 active bookings for same departure & destination)
-    const eligibility = validateBookingEligibility({
-      activeBookings: currentUserBookings,
-      candidateFromStopName: fromStop.name,
-      candidateToStopName: toStop.name,
-      penaltyPoints: currentUser.penaltyPoints,
-    });
-
-    if (!eligibility.canBook) {
-      showNotice(
-        eligibility.reason === 'DUPLICATE_ROUTE' ? 'Duplicate Route Blocked' : 'Booking Ineligible',
-        eligibility.message || 'You cannot book this seat.',
-        'alert'
-      );
-      return;
-    }
-
-    // Add seat to trip
-    setTrips((prevTrips) =>
-      prevTrips.map((t) =>
-        t.id === tripId ? { ...t, bookedSeatIds: [...t.bookedSeatIds, seatId] } : t
-      )
-    );
-
-    const newBooking: Booking = {
-      id: `bk-${Date.now()}`,
-      userId: currentUser.id,
-      tripId: trip.id,
-      seatId,
-      routeId: trip.routeId,
-      routeName: trip.routeName,
-      fromStopName: fromStop.name,
-      toStopName: toStop.name,
-      departureTime: trip.departureTime,
-      notify30Min: true,
-      status: 'RESERVED', // Rule 9.1: No QR code in RESERVED status!
-      bookedAt: simulatedTimeStr,
-    };
-
-    setUserBookings((prev) => ({
-      ...prev,
-      [currentUser.id]: [...(prev[currentUser.id] || []), newBooking],
-    }));
-
-    setSelectedFrom(fromStop);
-    setSelectedTo(toStop);
     setSeatPickerTrip(null);
     setIsScheduleOpen(false);
-
-    showNotice(
-      'Seat Reserved',
-      `Seat ${seatId} held for ${trip.departureTime}. Check in between T-30 and T-10 at ${fromStop.name} to receive your QR pass.`,
-      'success'
-    );
   };
 
-  // Cancellation with Master Penalty Rules (Free before check-in, 1 Minor after check-in)
+  // Cancellation: free before check-in, 1 minor point after check-in
   const handleConfirmCancel = (bookingId: string) => {
     if (!currentUser) return;
-
-    const booking = currentUserBookings.find((b) => b.id === bookingId);
-    if (!booking) return;
-
-    const trip = trips.find((t) => t.id === booking.tripId);
-    const isWaiver = trip?.tripStatus === 'DELAYED' || trip?.tripStatus === 'CANCELLED';
-    const penaltyEval = evaluateCancellationPenalty(booking, isWaiver);
-
-    // Free the seat in trip
-    setTrips((prevTrips) =>
-      prevTrips.map((t) =>
-        t.id === booking.tripId
-          ? { ...t, bookedSeatIds: t.bookedSeatIds.filter((s) => s !== booking.seatId) }
-          : t
-      )
-    );
-
-    // Remove or cancel booking
-    setUserBookings((prev) => ({
-      ...prev,
-      [currentUser.id]: (prev[currentUser.id] || []).filter((b) => b.id !== bookingId),
-    }));
-
-    // Apply penalties if evaluated
-    if (penaltyEval.points > 0) {
-      setUsers((prevUsers) =>
-        prevUsers.map((u) => {
-          if (u.id === currentUser.id) {
-            const newMinors = u.minorPenalties + penaltyEval.minorPoints;
-            const newTotal = u.penaltyPoints + penaltyEval.points;
-            return {
-              ...u,
-              minorPenalties: newMinors,
-              penaltyPoints: newTotal,
-              penaltyStrikes: Math.floor(newTotal / 2),
-              isRestricted: newTotal >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD,
-            };
-          }
-          return u;
-        })
-      );
-      showNotice(
-        'Cancellation Processed (1 Minor Penalty)',
-        `Canceled after check-in. 1 Minor point applied (${currentUser.penaltyPoints + 1}/6 pts).`,
-        'warning'
-      );
-    } else {
-      showNotice('Reservation Cancelled', 'Free cancellation before check-in. 0 penalty points applied.', 'info');
-    }
-
+    apply(cancel(sim, currentUser.id, bookingId));
     setCancelingBooking(null);
   };
 
-  // Atomic FCFS Claim Handler (Section 11)
-  const handleAcceptClaimSeat = (tripId: string, seatId: string) => {
+  // Claim the earlier shuttle (only from the schedule immediately after it)
+  const handleAcceptClaimSeat = (tripId: string, _seatId: string) => {
     if (!currentUser) return;
-
-    const targetTrip = trips.find((t) => t.id === tripId);
-    if (!targetTrip) return;
-
-    // Find passenger's booking on immediately following bus
-    const sourceBooking = currentUserBookings.find(
-      (b) =>
-        b.routeId === targetTrip.routeId &&
-        (b.status === 'RESERVED' || b.status === 'CHECKED_IN') &&
-        b.tripId !== targetTrip.id
-    );
-
-    // Validate eligibility using strict PDF rules
-    const eligibility = validateClaimEligibility({
-      candidateUser: currentUser,
-      candidateBooking: sourceBooking,
-      candidateTrip: sourceBooking ? trips.find((t) => t.id === sourceBooking.tripId) : undefined,
-      targetTrip,
-      currentTimeStr: simulatedTimeStr,
-      userCoord: currentUser.coords,
-      pickupCoord: APU_STOPS[1].coords, // LRT Bukit Jalil
-    });
-
-    if (!eligibility.eligible) {
-      showNotice('Claim Failed', eligibility.reason, 'alert');
-      setStandbyOffer(null);
-      return;
+    const result = apply(claim(sim, currentUser.id, tripId));
+    if (result.ok && result.booking) {
+      setPassBookingId(result.booking.id);
+      setIsBoardingPassOpen(true);
+    } else {
+      setDismissedOffers((prev) => [...prev, tripId]);
     }
-
-    // Atomic Transfer:
-    // 1. Release seat on source trip
-    if (sourceBooking) {
-      setTrips((prevTrips) =>
-        prevTrips.map((t) =>
-          t.id === sourceBooking.tripId
-            ? { ...t, bookedSeatIds: t.bookedSeatIds.filter((s) => s !== sourceBooking.seatId) }
-            : t
-        )
-      );
-    }
-
-    // 2. Reserve seat on target trip
-    setTrips((prevTrips) =>
-      prevTrips.map((t) =>
-        t.id === targetTrip.id ? { ...t, bookedSeatIds: [...t.bookedSeatIds, seatId] } : t
-      )
-    );
-
-    // 3. Mark old booking as TRANSFERRED and create new active booking with status CHECKED_IN
-    const qrToken = `APU-PASS-${currentUser.studentId}-${targetTrip.id}-${seatId}`;
-    const newClaimBooking: Booking = {
-      id: `bk-claim-${Date.now()}`,
-      userId: currentUser.id,
-      tripId: targetTrip.id,
-      seatId,
-      routeId: targetTrip.routeId,
-      routeName: targetTrip.routeName,
-      fromStopName: 'LRT Bukit Jalil',
-      toStopName: 'Asia Pacific University (APU Campus)',
-      departureTime: targetTrip.departureTime,
-      notify30Min: true,
-      status: 'CHECKED_IN', // Automatically checked-in upon successful claim!
-      checkedInAt: simulatedTimeStr,
-      bookedAt: simulatedTimeStr,
-      qrCodeToken: qrToken,
-    };
-
-    setUserBookings((prev) => ({
-      ...prev,
-      [currentUser.id]: [
-        ...(prev[currentUser.id] || []).map((b) =>
-          b.id === sourceBooking?.id ? { ...b, status: 'TRANSFERRED' as const } : b
-        ),
-        newClaimBooking,
-      ],
-    }));
-
-    setStandbyOffer(null);
-    setSelectedBookingForPass(newClaimBooking);
-    setIsBoardingPassOpen(true);
-
-    showNotice(
-      'FCFS Claim Successful! 🎉',
-      `Transferred to earlier Bus A (${targetTrip.departureTime}, Seat ${seatId}). Boarding QR code generated!`,
-      'success'
-    );
   };
 
-  // Toggle user simulated location (In range vs Out of range)
+  // Toggle user simulated location (at the pickup point vs ~11 km away)
   const handleToggleUserLocation = () => {
     if (!currentUser) return;
-    const isNowNear = !currentUser.isNearStop;
-    const updatedCoords = isNowNear
-      ? { lat: 3.0585, lng: 101.6919 } // LRT Bukit Jalil Waiting Bay (<50m, in 120m zone)
-      : { lat: 3.1205, lng: 101.7275 }; // Cheras / M Vertica (~9km away)
-
-    setUsers((prev) =>
-      prev.map((u) =>
-        u.id === currentUser.id
-          ? {
-              ...u,
-              isNearStop: isNowNear,
-              coords: updatedCoords,
-              currentLocationName: isNowNear
-                ? 'LRT Bukit Jalil Bus Bay (In Range, 30m)'
-                : 'M Vertica, Cheras (~9km away, Out of Range)',
-            }
-          : u
-      )
-    );
-
-    showNotice(
-      'GPS Location Updated',
-      isNowNear
-        ? 'Location moved to LRT Bukit Jalil Bus Bay (Inside 120m Proximity Circle)'
-        : 'Location moved to Cheras (~9km away, Outside Proximity Circle)',
-      'info'
-    );
+    const next = setUserLocation(sim, currentUser.id, !currentUser.isNearStop);
+    commit(next);
+    const moved = next.users.find((u) => u.id === currentUser.id);
+    showNotice('Simulated Location Updated', moved?.currentLocationName || '', 'info');
   };
 
-  // Driver Console: Toggle Boarding Open / Close & Issue No-Shows
+  // Driver: open / close boarding
   const handleDriverToggleBoarding = (tripId: string) => {
-    const targetTrip = trips.find((t) => t.id === tripId);
-    if (!targetTrip) return;
-
-    const willBeOpen = !targetTrip.boardingOpen;
-
-    setTrips((prev) =>
-      prev.map((t) => (t.id === tripId ? { ...t, boardingOpen: willBeOpen } : t))
-    );
-
-    // If closing boarding, all checked-in passengers who have not boarded receive No-Show penalty (2 points / 1 Major)
-    if (!willBeOpen) {
-      const isTripCancelledOrDelayed =
-        targetTrip.tripStatus === 'CANCELLED' || targetTrip.tripStatus === 'DELAYED';
-
-      // Transition trip status to DEPARTED upon closing boarding
-      setTrips((prev) =>
-        prev.map((t) => (t.id === tripId ? { ...t, tripStatus: 'DEPARTED' as const } : t))
-      );
-
-      Object.entries(userBookings).forEach(([userId, bList]) => {
-        bList.forEach((b) => {
-          if (b.tripId === tripId && b.status === 'CHECKED_IN') {
-            // Transition to NO_SHOW (passenger checked in but did not scan QR to depart)
-            setUserBookings((prev) => ({
-              ...prev,
-              [userId]: (prev[userId] || []).map((item) =>
-                item.id === b.id ? { ...item, status: 'NO_SHOW' as const } : item
-              ),
-            }));
-
-            // Evaluate penalty of 2 score (1 Major penalty) per rule:
-            // "whenever the bus depart, but the person only check in and not scan the qr for depart it will count as penalty of 2 score"
-            const penaltyEval = evaluateNoShowPenalty(b, isTripCancelledOrDelayed);
-            if (penaltyEval.points > 0) {
-              setUsers((prevUsers) =>
-                prevUsers.map((u) => {
-                  if (u.id === userId) {
-                    const newMajors = u.majorPenalties + penaltyEval.majorPoints;
-                    const newTotal = u.penaltyPoints + penaltyEval.points; // +2 score
-                    return {
-                      ...u,
-                      majorPenalties: newMajors,
-                      penaltyPoints: newTotal,
-                      penaltyStrikes: Math.floor(newTotal / 2),
-                      isRestricted: newTotal >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD,
-                    };
-                  }
-                  return u;
-                })
-              );
-            }
-          }
-        });
-      });
-
-      showNotice(
-        'Bus Departed - 2 Penalty Score Issued',
-        `Bus ${targetTrip.routeName} has departed. Checked-in passengers who did not scan QR to depart received a 2-score penalty.`,
-        'alert'
-      );
-    } else {
-      // Set to BOARDING
-      setTrips((prev) =>
-        prev.map((t) => (t.id === tripId ? { ...t, tripStatus: 'BOARDING' as const } : t))
-      );
-      showNotice('Boarding Open', `Boarding is now open for ${targetTrip.routeName}. Ready to scan passes.`, 'info');
-    }
+    const trip = trips.find((t) => t.id === tripId);
+    if (!trip) return;
+    apply(setBoarding(sim, tripId, !trip.boardingOpen, actorName));
   };
 
-  // Driver Console: Scan Pass / Student ID
-  const handleDriverScanPass = (tokenOrCode: string) => {
-    const tripBookings = allBookingsFlat.filter((b) => b.tripId === driverTripId);
-
-    // Find matching booking by QR code token or student ID
-    const matchedBooking = tripBookings.find((b) => {
-      const u = users.find((usr) => usr.id === b.userId);
-      return (
-        b.qrCodeToken === tokenOrCode ||
-        u?.studentId?.toUpperCase() === tokenOrCode.toUpperCase() ||
-        b.id === tokenOrCode
-      );
-    });
-
-    if (!matchedBooking) {
-      return { success: false, message: 'Invalid Boarding Pass: No booking found for this trip.' };
-    }
-
-    if (matchedBooking.status === 'RESERVED') {
-      return {
-        success: false,
-        message: 'Invalid Pass: Passenger did not complete GPS check-in (Status: RESERVED).',
-      };
-    }
-
-    if (matchedBooking.status === 'EXPIRED') {
-      return {
-        success: false,
-        message: 'Pass Expired: Reservation expired at T-10 due to missing check-in.',
-      };
-    }
-
-    if (matchedBooking.status === 'BOARDED') {
-      return { success: false, message: 'Pass Already Scanned: Passenger already boarded.' };
-    }
-
-    if (matchedBooking.status === 'CHECKED_IN') {
-      setUserBookings((prev) => ({
-        ...prev,
-        [matchedBooking.userId]: (prev[matchedBooking.userId] || []).map((b) =>
-          b.id === matchedBooking.id ? { ...b, status: 'BOARDED' as const } : b
-        ),
-      }));
-      const u = users.find((usr) => usr.id === matchedBooking.userId);
-      return {
-        success: true,
-        message: `Boarding Verified: Welcome ${u?.name || 'Passenger'} (Seat ${matchedBooking.seatId})!`,
-      };
-    }
-
-    return { success: false, message: `Pass has status: ${matchedBooking.status}` };
+  // Driver: scan a QR pass. Only the QR token is accepted; the result shows who the pass belongs to.
+  const handleDriverScanPass = (tripId: string, token: string): ScanResult => {
+    const { state, result } = scanPass(sim, tripId, token, actorName);
+    commit(state);
+    return result;
   };
 
-  // Driver Manual Boarding Attendance Override (with 4-digit security code confirmation)
-  const handleDriverManualConfirmBoarding = useCallback((bookingId: string) => {
-    setUserBookings((prev) => {
-      const next: Record<string, Booking[]> = {};
-      let changed = false;
-      Object.entries(prev).forEach(([uid, bList]) => {
-        next[uid] = bList.map((b) => {
-          if (b.id === bookingId) {
-            changed = true;
-            return {
-              ...b,
-              status: 'BOARDED' as const,
-              boardedAt: simulatedTimeStr,
-            };
-          }
-          return b;
-        });
-      });
-      return changed ? next : prev;
-    });
+  // Driver: board without a scan. Needs a written reason and is always logged.
+  const handleDriverManualConfirmBoarding = (bookingId: string, reason: string): { ok: boolean; message: string } => {
+    const result = apply(manualBoard(sim, bookingId, reason, actorName));
+    return { ok: result.ok, message: result.message };
+  };
 
-    showNotice(
-      'Boarding Confirmed',
-      'Driver manually verified attendance. Passenger status is now Inside/Boarded.',
-      'success'
-    );
-  }, [simulatedTimeStr]);
+  // Driver: mark Arrived / Departed (departure is refused before the scheduled time)
+  const handleDriverManualSetTripStatus = (tripId: string, status: 'ARRIVED' | 'DEPARTED'): { ok: boolean; message: string } => {
+    const result = apply(setTripStatus(sim, tripId, status, actorName));
+    return { ok: result.ok, message: result.message };
+  };
 
-  // Driver Manual Trip Status Override (Arrived / Departed) with 2-minute departure countdown & 2-score penalty rules
-  const handleDriverManualSetTripStatus = useCallback((tripId: string, status: 'ARRIVED' | 'DEPARTED') => {
-    const targetTrip = trips.find((t) => t.id === tripId);
-    if (!targetTrip) return;
-
-    if (status === 'ARRIVED') {
-      setTrips((prev) =>
-        prev.map((t) => (t.id === tripId ? { ...t, tripStatus: 'ARRIVED', boardingOpen: true } : t))
-      );
-      showNotice(
-        'Bus Arrived 🚌',
-        `${targetTrip.routeName} has arrived! 2-minute departure window open. Scan for depart to board now.`,
-        'success'
-      );
-    } else if (status === 'DEPARTED') {
-      const isTripCancelledOrDelayed =
-        targetTrip.tripStatus === 'CANCELLED' || targetTrip.tripStatus === 'DELAYED';
-
-      setTrips((prev) =>
-        prev.map((t) => (t.id === tripId ? { ...t, tripStatus: 'DEPARTED', boardingOpen: false } : t))
-      );
-
-      // Penalize passengers who completed check-in but did not scan QR to depart / board
-      Object.entries(userBookings).forEach(([userId, bList]) => {
-        bList.forEach((b) => {
-          if (b.tripId === tripId && b.status === 'CHECKED_IN') {
-            setUserBookings((prev) => ({
-              ...prev,
-              [userId]: (prev[userId] || []).map((item) =>
-                item.id === b.id ? { ...item, status: 'NO_SHOW' as const } : item
-              ),
-            }));
-
-            const penaltyEval = evaluateNoShowPenalty(isTripCancelledOrDelayed);
-            if (penaltyEval.points > 0) {
-              setUsers((prevUsers) =>
-                prevUsers.map((u) => {
-                  if (u.id === userId) {
-                    const newMajors = u.majorPenalties + penaltyEval.majorPoints;
-                    const newTotal = u.penaltyPoints + penaltyEval.points; // +2 score
-                    return {
-                      ...u,
-                      majorPenalties: newMajors,
-                      penaltyPoints: newTotal,
-                      penaltyStrikes: Math.floor(newTotal / 2),
-                      isRestricted: newTotal >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD,
-                    };
-                  }
-                  return u;
-                })
-              );
-            }
-          }
-        });
-      });
-
-      showNotice(
-        'Bus Departed - 2 Penalty Score Issued',
-        `Bus ${targetTrip.routeName} has departed. Checked-in passengers who did not scan QR to depart received a 2-score penalty.`,
-        'alert'
-      );
-    }
-  }, [trips, userBookings]);
-
-  // Reset Demo to 07:45 Initial Conditions (Section 19.2)
+  // Reset Demo to the 07:45 scenario start
   const handleResetDemo = () => {
-    setSimulatedTimeStr('07:45');
+    commit(createInitialState());
     setIsAutoTickRunning(false);
-    setTrips(INITIAL_TRIPS);
-    setUsers(DEMO_ACCOUNTS);
-    setUserBookings({
-      'user-sarah': [
-        {
-          id: 'bk-sarah-demo-a',
-          userId: 'user-sarah',
-          tripId: 'demo-a-0800',
-          seatId: '1A',
-          routeId: 'lrt',
-          routeName: 'LRT Bukit Jalil ➔ APU (Bus A)',
-          fromStopName: 'LRT Bukit Jalil',
-          toStopName: 'Asia Pacific University (APU Campus)',
-          departureTime: '08:00',
-          notify30Min: true,
-          status: 'CHECKED_IN',
-          checkedInAt: '07:42',
-          bookedAt: '07:30',
-          qrCodeToken: 'APU-PASS-TP068412-DEMOA-1A',
-        },
-      ],
-      'user-ryan': [
-        {
-          id: 'bk-ryan-demo-a',
-          userId: 'user-ryan',
-          tripId: 'demo-a-0800',
-          seatId: '1B',
-          routeId: 'lrt',
-          routeName: 'LRT Bukit Jalil ➔ APU (Bus A)',
-          fromStopName: 'LRT Bukit Jalil',
-          toStopName: 'Asia Pacific University (APU Campus)',
-          departureTime: '08:00',
-          notify30Min: true,
-          status: 'RESERVED',
-          bookedAt: '07:32',
-        },
-      ],
-      'user-rani': [
-        {
-          id: 'bk-rani-demo-b',
-          userId: 'user-rani',
-          tripId: 'demo-b-0810',
-          seatId: '1A',
-          routeId: 'lrt',
-          routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-          fromStopName: 'LRT Bukit Jalil',
-          toStopName: 'Asia Pacific University (APU Campus)',
-          departureTime: '08:10',
-          notify30Min: true,
-          status: 'RESERVED',
-          bookedAt: '07:34',
-        },
-      ],
-      'user-amir': [
-        {
-          id: 'bk-amir-demo-b',
-          userId: 'user-amir',
-          tripId: 'demo-b-0810',
-          seatId: '1B',
-          routeId: 'lrt',
-          routeName: 'LRT Bukit Jalil ➔ APU (Bus B)',
-          fromStopName: 'LRT Bukit Jalil',
-          toStopName: 'Asia Pacific University (APU Campus)',
-          departureTime: '08:10',
-          notify30Min: true,
-          status: 'RESERVED',
-          bookedAt: '07:35',
-        },
-      ],
-    });
-    setStandbyOffer(null);
-    showNotice('Demo Reset', 'Reset to 07:45 initial Hackathon demo scenario conditions.', 'info');
+    setDismissedOffers([]);
+    setPassBookingId(null);
+    setIsBoardingPassOpen(false);
+    showNotice('Demo Reset', 'Back to Fri 13 Nov, 07:45. Press Auto-Tick to replay every case.', 'info');
+  };
+
+  // Start the next service day: bookings start fresh, penalty points carry over
+  const handleNextServiceDay = () => {
+    const next = startNextServiceDay(sim);
+    commit(next);
+    setIsAutoTickRunning(false);
+    setDismissedOffers([]);
+    setPassBookingId(null);
+    setIsBoardingPassOpen(false);
+    setSeatPickerTrip(null);
+    setCancelingBooking(null);
+    showNotice('New Service Day', `${formatServiceDay(next.day)}, ${next.time}. Bookings start fresh; penalty points carry over.`, 'info');
   };
 
   // Toggle Seat Alert for a trip
   const handleToggleSeatAlert = (tripId: string) => {
     if (!currentUser) return;
-    setSeatAlerts((prev) => {
-      const currentList = prev[tripId] || [];
-      const updated = currentList.includes(currentUser.id)
-        ? currentList.filter((id) => id !== currentUser.id)
-        : [...currentList, currentUser.id];
-      return { ...prev, [tripId]: updated };
-    });
+    commit(toggleSeatAlert(sim, currentUser.id, tripId));
+    setDismissedOffers((prev) => prev.filter((id) => id !== tripId));
   };
 
-  const isUserSubscribedToAlert = (tripId: string) => {
-    if (!currentUser) return false;
-    return (seatAlerts[tripId] || []).includes(currentUser.id);
-  };
+  const activeBookingCount = currentUserBookings.filter(
+    (b) => b.status === 'RESERVED' || b.status === 'CHECKED_IN' || b.status === 'BOARDED'
+  ).length;
+
+  const scenarioPanel = (
+    <ScenarioLogPanel
+      log={sim.log}
+      users={users}
+      dayLabel={serviceDayLabel}
+      timeStr={simulatedTimeStr}
+      autoplay={sim.autoplay}
+      onToggleAutoplay={() => commit(setAutoplay(sim, !sim.autoplay))}
+    />
+  );
 
   return (
     <PhoneShell
       simulatedTimeStr={simulatedTimeStr}
       theme={theme}
       onToggleTheme={handleToggleTheme}
+      sidePanel={scenarioPanel}
     >
       {/* Client-Side Quota Defense Banner */}
       {quotaExceeded && (
@@ -1573,12 +442,13 @@ export default function App() {
       {/* Screen 1: Official Demo Persona Selector (Section 19.1) */}
       {!currentUser ? (
         <DemoAccountSelector
+          accounts={users}
+          dayLabel={serviceDayLabel}
           onSelectAccount={(user) => {
             setCurrentUserId(user.id);
-            if (user.id === 'user-rani' || user.id === 'user-amir' || user.id === 'user-sarah') {
-              setSelectedFrom(APU_STOPS[1]);
-              setSelectedTo(APU_STOPS[0]);
-            }
+            setDismissedOffers([]);
+            setSelectedFrom(APU_STOPS[1]);
+            setSelectedTo(APU_STOPS[0]);
           }}
         />
       ) : currentUser.role === 'Driver' ? (
@@ -1593,6 +463,7 @@ export default function App() {
           onToggleTheme={handleToggleTheme}
           onSwitchDriver={() => setCurrentUserId(null)}
           onManualConfirmBoarding={handleDriverManualConfirmBoarding}
+          onScanPass={handleDriverScanPass}
           onToggleBoarding={handleDriverToggleBoarding}
           onManualSetTripStatus={handleDriverManualSetTripStatus}
           onResetDemo={handleResetDemo}
@@ -1643,12 +514,14 @@ export default function App() {
             minorPenalties={currentUser.minorPenalties}
             majorPenalties={currentUser.majorPenalties}
             penaltyPoints={currentUser.penaltyPoints}
+            isRestricted={currentUser.isRestricted}
+            restrictedOnLabel={currentUser.restrictedOn ? formatServiceDay(currentUser.restrictedOn) : null}
             currentTimeStr={simulatedTimeStr}
             userCoords={currentUser.coords}
             onToggleNotify30={handleToggleNotify30}
             onCheckInNow={handleCheckInNow}
             onOpenBoardingPass={(b) => {
-              setSelectedBookingForPass(b);
+              setPassBookingId(b.id);
               setIsBoardingPassOpen(true);
             }}
             onRequestCancel={(b) => setCancelingBooking(b)}
@@ -1657,7 +530,7 @@ export default function App() {
 
           {/* Primary Action Button: Open Shuttle Schedule & Booking */}
           <div className="px-3 py-2.5">
-            {currentUserBookings.filter((b) => b.status === 'RESERVED' || b.status === 'CHECKED_IN' || b.status === 'BOARDED').length >= 2 ? (
+            {activeBookingCount >= 2 ? (
               <button
                 onClick={() => setIsScheduleOpen(true)}
                 className="w-full py-2.5 px-4 rounded-md bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs hover:bg-zinc-300 dark:hover:bg-zinc-700 transition-all tracking-wide"
@@ -1669,14 +542,14 @@ export default function App() {
                   VIEW TIMETABLE
                 </span>
               </button>
-            ) : currentUser.penaltyPoints >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD ? (
+            ) : currentUser.isRestricted ? (
               <button
                 onClick={() => setIsScheduleOpen(true)}
                 className="w-full py-2.5 px-4 rounded-md bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 border border-zinc-300 dark:border-zinc-700 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-all tracking-wide"
-                title="Account suspended due to 6/6 penalty points."
+                title="Booking is restricted for this one service day after reaching 6 penalty points."
               >
                 <Bus className="w-4 h-4 shrink-0 text-zinc-400" />
-                <span>BOOKING SUSPENDED (6/6 PENALTIES)</span>
+                <span>BOOKING RESTRICTED TODAY ({serviceDayLabel})</span>
                 <span className="text-[10px] bg-zinc-300 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 px-1.5 py-0.5 rounded-xs font-mono uppercase tracking-wider ml-1">
                   VIEW ONLY
                 </span>
@@ -1704,7 +577,9 @@ export default function App() {
                 tickSpeed={tickSpeed}
                 onToggleAutoTick={() => setIsAutoTickRunning(!isAutoTickRunning)}
                 onSetTickSpeed={setTickSpeed}
-                onSetTime={setSimulatedTimeStr}
+                onSetTime={handleSetTime}
+                dayLabel={serviceDayLabel}
+                onNextServiceDay={handleNextServiceDay}
                 currentUser={currentUser}
                 onToggleUserLocation={handleToggleUserLocation}
                 onOpenDriverConsole={() => {
@@ -1734,7 +609,7 @@ export default function App() {
             setCancelingBooking(b);
           }}
           onToggleWaitlist={handleToggleSeatAlert}
-          waitlistTripIds={seatAlerts['demo-a-0800'] || []}
+          waitlistTripIds={myAlertTripIds}
           isBookingOpen={isBookingOpen}
           onClose={() => setIsScheduleOpen(false)}
           initialRouteFilter={selectedFrom?.id}
@@ -1747,7 +622,7 @@ export default function App() {
           trip={seatPickerTrip}
           currentUser={currentUser}
           currentTimeStr={simulatedTimeStr}
-          hasActiveBookingLimit={currentUserBookings.filter((b) => b.status === 'RESERVED' || b.status === 'CHECKED_IN' || b.status === 'BOARDED').length >= 2}
+          hasActiveBookingLimit={activeBookingCount >= 2}
           onConfirmSeat={handleConfirmSeat}
           onClose={() => setSeatPickerTrip(null)}
         />
@@ -1795,7 +670,7 @@ export default function App() {
           sourceBooking={standbyOffer.sourceBooking}
           currentTimeStr={simulatedTimeStr}
           onAcceptSeat={handleAcceptClaimSeat}
-          onDecline={() => setStandbyOffer(null)}
+          onDecline={() => setDismissedOffers((prev) => [...prev, standbyOffer.trip.id])}
         />
       )}
 
@@ -1806,7 +681,7 @@ export default function App() {
           allBookings={allBookingsFlat}
           users={users}
           onToggleBoarding={handleDriverToggleBoarding}
-          onScanPass={handleDriverScanPass}
+          onScanPass={(token) => handleDriverScanPass(driverTripId, token)}
           onClose={() => setIsDriverConsoleOpen(false)}
         />
       )}

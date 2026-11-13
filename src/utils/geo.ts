@@ -1,4 +1,4 @@
-import { LocationCoord } from '../types/bus';
+import type { LocationCoord } from '../types/bus.ts';
 
 /**
  * Calculates Haversine great-circle distance between two GPS coordinates in meters.

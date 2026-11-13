@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BusTrip, Booking, DemoUser } from '../types/bus';
+import { BusTrip, Booking, DemoUser, ScanResult } from '../types/bus';
 import { formatTime12h, calculateTripCapacity } from '../utils/bookingRules';
 import {
   X,
@@ -16,7 +16,7 @@ interface DriverConsoleModalProps {
   allBookings: Booking[];
   users: DemoUser[];
   onToggleBoarding: (tripId: string) => void;
-  onScanPass: (tokenOrStudentId: string) => { success: boolean; message: string };
+  onScanPass: (qrToken: string) => ScanResult; // only the QR token is accepted
   onClose: () => void;
 }
 
@@ -29,7 +29,7 @@ export const DriverConsoleModal: React.FC<DriverConsoleModalProps> = ({
   onClose,
 }) => {
   const [inputCode, setInputCode] = useState('');
-  const [scanResult, setScanResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
 
   const tripBookings = allBookings.filter((b) => b.tripId === trip.id);
   const cap = calculateTripCapacity(trip, tripBookings);
@@ -103,7 +103,7 @@ export const DriverConsoleModal: React.FC<DriverConsoleModalProps> = ({
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white'
               }`}
             >
-              {trip.boardingOpen ? 'Close Boarding (Issue No-Shows)' : 'Open Boarding'}
+              {trip.boardingOpen ? 'Close Boarding' : 'Open Boarding'}
             </button>
           </div>
 
@@ -135,7 +135,7 @@ export const DriverConsoleModal: React.FC<DriverConsoleModalProps> = ({
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-zinc-400" />
               <input
                 type="text"
-                placeholder="Type QR Token or Student ID..."
+                placeholder="QR token, e.g. APB-K7M2-9QXA-4TBC"
                 value={inputCode}
                 onChange={(e) => setInputCode(e.target.value)}
                 className="w-full pl-8 pr-2.5 py-1.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-sm text-xs text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:border-emerald-500 font-mono"
@@ -163,9 +163,19 @@ export const DriverConsoleModal: React.FC<DriverConsoleModalProps> = ({
               ) : (
                 <Ban className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
               )}
-              <span>{scanResult.message}</span>
+              <div className="min-w-0">
+                <span className="block">{scanResult.message}</span>
+                {scanResult.passenger && (
+                  <span className="block font-mono text-[10px] mt-0.5 opacity-90">
+                    {scanResult.passenger.name} · {scanResult.passenger.studentId} · {scanResult.passenger.bookingId} · Seat {scanResult.passenger.seatId} · {scanResult.passenger.departureTime}
+                  </span>
+                )}
+              </div>
             </div>
           )}
+          <p className="mt-1.5 text-[9px] font-mono text-zinc-500">
+            Only the QR token boards a passenger. A TP number or booking ID is shown for identity, never accepted as a pass.
+          </p>
         </div>
 
         {/* Passenger Manifest List */}
@@ -194,7 +204,7 @@ export const DriverConsoleModal: React.FC<DriverConsoleModalProps> = ({
                     <div className="min-w-0">
                       <div className="font-bold text-zinc-900 dark:text-white truncate text-xs">{u?.name || b.userId}</div>
                       <div className="text-[9px] text-zinc-500 font-mono">
-                        {u?.studentId || 'STUDENT'} · {b.bookedAt || '07:30'}
+                        {u?.studentId || 'STUDENT'} · {b.id}
                       </div>
                     </div>
                   </div>
@@ -213,15 +223,16 @@ export const DriverConsoleModal: React.FC<DriverConsoleModalProps> = ({
                     </span>
 
                     {/* Quick board button */}
-                    {b.status === 'CHECKED_IN' && trip.boardingOpen && (
+                    {(b.status === 'CHECKED_IN' || b.status === 'BOARDED') && b.qrCodeToken && (
                       <button
                         onClick={() => {
-                          const res = onScanPass(u?.studentId || b.id);
+                          const res = onScanPass(b.qrCodeToken || '');
                           setScanResult(res);
                         }}
                         className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xs text-[10px] font-bold transition"
+                        title="Demo: simulates the camera reading this passenger's QR pass"
                       >
-                        Board
+                        Scan QR
                       </button>
                     )}
                   </div>

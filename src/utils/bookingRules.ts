@@ -1,5 +1,5 @@
-import { Booking, BookingStatus, BusLifecycleStatus, BusTrip, CheckInAssessmentStatus, DemoUser, LocationCoord } from '../types/bus';
-import { isWithinBusStopRange, getStopRadius } from './geo';
+import type { Booking, BookingStatus, BusLifecycleStatus, BusTrip, CheckInAssessmentStatus, LocationCoord, PenaltyRecord } from '../types/bus.ts';
+import { isWithinBusStopRange } from './geo.ts';
 
 /**
  * Checks if daily booking is open.
@@ -28,21 +28,21 @@ export function getMinutesUntilDeparture(currentTimeStr: string, departureTimeSt
 
 /**
  * Checks if normal booking is still open for a specific trip.
- * Master Context v2.0 Rule: Normal booking closes strictly 10 minutes before effective departure (T-10).
+ * Rule: normal booking closes at T-10 (the last valid minute is T-11).
  */
 export function isNormalBookingOpen(currentTimeStr: string, departureTimeStr: string): boolean {
   const minsUntil = getMinutesUntilDeparture(currentTimeStr, departureTimeStr);
-  return minsUntil >= 10;
+  return minsUntil > 10;
 }
 
 /**
- * Checks if FCFS Claim window is open for a trip.
- * Master Context v2.0 Rule: Claim closes strictly at T-3 minutes or when boarding has closed.
+ * Checks if the Claim window is open for a trip.
+ * Rule: a Claim issues a boarding pass immediately, so it follows the check-in opening (T-30)
+ * and it closes at T-3. It does NOT depend on the driver having opened boarding.
  */
-export function isClaimWindowOpen(currentTimeStr: string, departureTimeStr: string, boardingOpen: boolean = true): boolean {
-  if (!boardingOpen) return false;
+export function isClaimWindowOpen(currentTimeStr: string, departureTimeStr: string): boolean {
   const minsUntil = getMinutesUntilDeparture(currentTimeStr, departureTimeStr);
-  return minsUntil >= 3;
+  return minsUntil <= 30 && minsUntil >= 3;
 }
 
 /**
@@ -97,8 +97,8 @@ export function evaluateCheckInAssessment(params: {
     };
   }
 
-  // After T-10 (Check-in window closed)
-  if (minutesUntil < 10) {
+  // At or after T-10 (Check-in window closed, unverified reservations expire at T-10)
+  if (minutesUntil <= 10) {
     const msg = 'Normal check-in closed at T−10 minutes.';
     return {
       allowed: false,
@@ -404,15 +404,17 @@ export function validateBookingEligibility(params: {
   activeBookings: Booking[];
   candidateFromStopName: string;
   candidateToStopName: string;
-  penaltyPoints?: number;
+  isRestricted?: boolean; // true only on the one restricted service day
+  penaltyPoints?: number; // informational only (shown in the message)
 }): { canBook: boolean; reason?: 'RESTRICTED' | 'MAX_LIMIT_REACHED' | 'DUPLICATE_ROUTE'; message?: string } {
-  const { activeBookings, candidateFromStopName, candidateToStopName, penaltyPoints = 0 } = params;
+  const { activeBookings, candidateFromStopName, candidateToStopName, isRestricted = false } = params;
 
-  if (penaltyPoints >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD) {
+  // Reaching 6 points restricts ONE service day (the next one). It is not a permanent block.
+  if (isRestricted) {
     return {
       canBook: false,
       reason: 'RESTRICTED',
-      message: `Account restricted (${penaltyPoints}/${PENALTY_SYSTEM.RESTRICTION_THRESHOLD} points accumulated). Booking privileges suspended.`,
+      message: `Booking is restricted today because your account reached ${PENALTY_SYSTEM.RESTRICTION_THRESHOLD} penalty points. Booking is available again on the next service day.`,
     };
   }
 
@@ -425,7 +427,7 @@ export function validateBookingEligibility(params: {
     return {
       canBook: false,
       reason: 'MAX_LIMIT_REACHED',
-      message: `Maximum active bookings reached (${MAX_ACTIVE_BOOKINGS_LIMIT}/2). Cancel an existing booking to book another trip.`,
+      message: `You already have ${MAX_ACTIVE_BOOKINGS_LIMIT} active bookings (the maximum). Cancel one to book another shuttle.`,
     };
   }
 
@@ -442,7 +444,7 @@ export function validateBookingEligibility(params: {
     return {
       canBook: false,
       reason: 'DUPLICATE_ROUTE',
-      message: `Duplicate route rule: You already have an active booked seat from ${candidateFromStopName} to ${candidateToStopName} today. You cannot hold 2 active booked seats for the same departure and destination in a day.`,
+      message: `You already hold an active booking from ${candidateFromStopName} to ${candidateToStopName} today. Only one active booking per route (same pickup and destination) is allowed.`,
     };
   }
 
@@ -450,111 +452,267 @@ export function validateBookingEligibility(params: {
 }
 
 /**
- * FCFS Claim Eligibility (Master Context v2.0 Section 11):
- * Rules:
- * 1. Must hold an active booking on the IMMEDIATELY NEXT BUS (strictly 1 schedule slot later).
- * 2. Route, direction, pickup, and destination must match.
- * 3. User account is not restricted.
- * 4. Claim window is open (T-3 cutoff and boardingOpen !== false).
- * 5. Available seat exists on target bus.
- * 6. User is at the pickup location.
+ * The schedule immediately after `target` for the same pickup and destination
+ * (cancelled trips are skipped). Returns undefined when `target` is the last one.
+ */
+export function getImmediatelyNextTrip(allTrips: BusTrip[], target: BusTrip): BusTrip | undefined {
+  return allTrips
+    .filter(
+      (t) =>
+        t.id !== target.id &&
+        t.fromStopId === target.fromStopId &&
+        t.toStopId === target.toStopId &&
+        t.tripStatus !== 'CANCELLED' &&
+        t.departureTime > target.departureTime
+    )
+    .sort((x, y) => x.departureTime.localeCompare(y.departureTime))[0];
+}
+
+/** First unoccupied seat on a trip (row by row), or null when the trip is full. */
+export function getFirstFreeSeat(trip: BusTrip): string | null {
+  const capacity = trip.seatedCapacity ?? trip.totalSeats ?? 40;
+  if (trip.bookedSeatIds.length >= capacity) return null;
+  for (let row = 1; row <= Math.ceil(capacity / 4); row++) {
+    for (const col of ['A', 'B', 'C', 'D']) {
+      const id = `${row}${col}`;
+      if (!trip.bookedSeatIds.includes(id)) return id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Claim eligibility (move to the earlier shuttle):
+ * 1. The account is not restricted today.
+ * 2. The Claim window of the target shuttle is open (T-30 to T-3) and it has not left.
+ * 3. The user holds an active booking on the schedule IMMEDIATELY AFTER the target,
+ *    same pickup and same destination. A booking two or more schedules later is not eligible.
+ * 4. A seat is free on the target shuttle.
+ * 5. The user is at the pickup point.
+ * A failed Claim changes nothing: the original booking stays valid.
  */
 export function validateClaimEligibility(params: {
   targetTrip: BusTrip;
-  allTripsInRoute?: BusTrip[];
-  userBookings?: Booking[];
-  candidateBooking?: Booking | null;
-  candidateTrip?: BusTrip;
-  candidateUser?: DemoUser;
+  allTrips: BusTrip[];
+  userBookings: Booking[];
   currentTimeStr: string;
   userCoord: LocationCoord;
-  stopCoord?: LocationCoord;
-  pickupCoord?: LocationCoord;
-  stopIdentifier?: string;
-  userPenaltyPoints?: number;
+  pickupCoord: LocationCoord;
+  isRestricted?: boolean;
 }): {
   eligible: boolean;
   sourceBooking?: Booking;
+  nextTrip?: BusTrip;
   reason: string;
 } {
-  const {
-    targetTrip,
-    allTripsInRoute,
-    userBookings = [],
-    candidateBooking,
-    candidateUser,
-    currentTimeStr,
-    userCoord,
-    stopCoord,
-    pickupCoord,
-    stopIdentifier,
-  } = params;
+  const { targetTrip, allTrips, userBookings, currentTimeStr, userCoord, pickupCoord, isRestricted = false } = params;
 
-  const points = candidateUser?.penaltyPoints ?? params.userPenaltyPoints ?? 0;
-  const targetStopCoord = pickupCoord || stopCoord || { lat: 3.0587, lng: 101.6917 };
-
-  // 1. Restriction check
-  if (points >= PENALTY_SYSTEM.RESTRICTION_THRESHOLD) {
-    return { eligible: false, reason: 'Account booking/claim privileges are currently restricted.' };
+  if (isRestricted) {
+    return { eligible: false, reason: 'Booking and Claim are restricted for this account today.' };
   }
 
-  // 2. Claim window check (T-3 cutoff)
-  if (!isClaimWindowOpen(currentTimeStr, targetTrip.departureTime, targetTrip.boardingOpen)) {
-    return { eligible: false, reason: 'Claim window has closed (closes at T−3 minutes or when boarding closes).' };
+  if (['DEPARTED', 'COMPLETED', 'CANCELLED', 'ON_THE_WAY'].includes(targetTrip.tripStatus)) {
+    return { eligible: false, reason: 'This shuttle has already left or was cancelled.' };
   }
 
-  // 3. Find source booking
-  let matchedSourceBooking: Booking | undefined = candidateBooking || undefined;
-
-  if (!matchedSourceBooking && allTripsInRoute && allTripsInRoute.length > 0) {
-    const sortedTrips = [...allTripsInRoute].sort((a, b) => a.departureTime.localeCompare(b.departureTime));
-    const targetIndex = sortedTrips.findIndex((t) => t.id === targetTrip.id);
-    if (targetIndex === -1 || targetIndex === sortedTrips.length - 1) {
-      return { eligible: false, reason: 'No immediately following schedule exists on this route.' };
-    }
-
-    const immediatelyNextTrip = sortedTrips[targetIndex + 1];
-    matchedSourceBooking = userBookings.find(
-      (b) =>
-        b.tripId === immediatelyNextTrip.id &&
-        (b.status === 'RESERVED' || b.status === 'CHECKED_IN')
-    );
-
-    if (!matchedSourceBooking) {
-      return {
-        eligible: false,
-        reason: `Claim rule: You must hold an active reservation on the immediately following bus (${immediatelyNextTrip.departureTime} ${immediatelyNextTrip.routeName}) to claim this earlier seat.`,
-      };
-    }
-  }
-
-  if (!matchedSourceBooking) {
+  if (!isClaimWindowOpen(currentTimeStr, targetTrip.departureTime)) {
+    const minsUntil = getMinutesUntilDeparture(currentTimeStr, targetTrip.departureTime);
     return {
       eligible: false,
-      reason: 'Claim rule: You must hold an active reservation on the immediately following bus.',
+      reason:
+        minsUntil > 30
+          ? 'Claim opens 30 minutes before departure.'
+          : 'Claim window has closed (it closes 3 minutes before departure).',
     };
   }
 
-  // 4. Check user location at pickup stop
-  const { inRange, distanceMeters, thresholdMeters } = isWithinBusStopRange(
-    userCoord,
-    targetStopCoord,
-    stopIdentifier
-  );
+  const nextTrip = getImmediatelyNextTrip(allTrips, targetTrip);
+  if (!nextTrip) {
+    return { eligible: false, reason: 'There is no later schedule on this route, so there is nothing to claim from.' };
+  }
 
+  const isActive = (b: Booking) => b.status === 'RESERVED' || b.status === 'CHECKED_IN';
+  const sourceBooking = userBookings.find((b) => b.tripId === nextTrip.id && isActive(b));
+  if (!sourceBooking) {
+    const other = userBookings.find((b) => {
+      if (!isActive(b)) return false;
+      const t = allTrips.find((x) => x.id === b.tripId);
+      return (
+        !!t &&
+        t.fromStopId === targetTrip.fromStopId &&
+        t.toStopId === targetTrip.toStopId &&
+        t.departureTime > nextTrip.departureTime
+      );
+    });
+    return {
+      eligible: false,
+      nextTrip,
+      reason: other
+        ? `Claim is only allowed from the schedule immediately after this one (${nextTrip.departureTime}). Your booking is on the ${other.departureTime} shuttle.`
+        : `Claim requires an active booking on the schedule immediately after this one (${nextTrip.departureTime}).`,
+    };
+  }
+
+  if (getFirstFreeSeat(targetTrip) === null) {
+    return { eligible: false, sourceBooking, nextTrip, reason: 'No seat is free on this shuttle right now.' };
+  }
+
+  const { inRange, distanceMeters, thresholdMeters } = isWithinBusStopRange(userCoord, pickupCoord, targetTrip.fromStopId);
   if (!inRange) {
     return {
       eligible: false,
-      sourceBooking: matchedSourceBooking,
-      reason: `Location verification failed: You are ${distanceMeters}m away (need ≤ ${thresholdMeters}m from pickup stop to claim).`,
+      sourceBooking,
+      nextTrip,
+      reason: `Location check failed: you are ${distanceMeters} m from the pickup point (must be within ${thresholdMeters} m to claim).`,
     };
   }
 
+  return { eligible: true, sourceBooking, nextTrip, reason: 'Eligible to claim this earlier shuttle.' };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Service days and the penalty period                                        */
+/* -------------------------------------------------------------------------- */
+
+const DAY_MS = 86_400_000;
+const toUtc = (isoDay: string) => Date.parse(`${isoDay}T00:00:00Z`);
+const toIso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+export function addDays(isoDay: string, days: number): string {
+  return toIso(toUtc(isoDay) + days * DAY_MS);
+}
+
+export function daysBetween(fromIsoDay: string, toIsoDay: string): number {
+  return Math.round((toUtc(toIsoDay) - toUtc(fromIsoDay)) / DAY_MS);
+}
+
+/** The shuttle runs Monday to Friday. */
+export function isServiceDay(isoDay: string): boolean {
+  const dow = new Date(toUtc(isoDay)).getUTCDay();
+  return dow >= 1 && dow <= 5;
+}
+
+/** The first service day strictly after `isoDay` (Friday -> Monday). */
+export function nextServiceDay(isoDay: string): string {
+  let d = addDays(isoDay, 1);
+  while (!isServiceDay(d)) d = addDays(d, 1);
+  return d;
+}
+
+/** "18 Jan 2027" */
+export function formatDateLong(isoDay: string): string {
+  return new Date(toUtc(isoDay)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+}
+
+/** "Mon 16 Nov" */
+export function formatServiceDay(isoDay: string): string {
+  return new Date(toUtc(isoDay)).toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  });
+}
+
+/**
+ * Penalty period (agreed rules):
+ * - Minor = 1 point, Major = 2 points. Reversed (waived) penalties do not count.
+ * - A period starts at the first violation and lasts 90 days, then points reset to 0.
+ * - Every time the points of a period reach a multiple of 6, the account is restricted
+ *   for ONE service day: the next service day after the day the threshold was reached.
+ *   The restriction is never permanent.
+ */
+export function computePenaltyState(
+  records: PenaltyRecord[],
+  today: string
+): {
+  points: number;
+  minors: number;
+  majors: number;
+  restrictedToday: boolean;
+  upcomingRestriction: string | null;
+  restrictedDays: string[];
+  periodStart: string | null;
+  resetsOn: string | null;
+} {
+  const active = records
+    .filter((r) => !r.waived && r.day <= today)
+    .sort((a, b) => a.day.localeCompare(b.day) || a.timestamp.localeCompare(b.timestamp));
+
+  let periodStart: string | null = null;
+  let points = 0;
+  let minors = 0;
+  let majors = 0;
+  let threshold = PENALTY_SYSTEM.RESTRICTION_THRESHOLD;
+  const restrictedDays: string[] = [];
+
+  for (const r of active) {
+    if (periodStart === null || daysBetween(periodStart, r.day) >= PENALTY_SYSTEM.RESET_DAYS) {
+      periodStart = r.day;
+      points = 0;
+      minors = 0;
+      majors = 0;
+      threshold = PENALTY_SYSTEM.RESTRICTION_THRESHOLD;
+    }
+    points += r.points;
+    if (r.type === 'MINOR') minors++;
+    else majors++;
+    while (points >= threshold) {
+      const day = nextServiceDay(r.day);
+      if (!restrictedDays.includes(day)) restrictedDays.push(day);
+      threshold += PENALTY_SYSTEM.RESTRICTION_THRESHOLD;
+    }
+  }
+
+  // The period is over: points are back to zero.
+  if (periodStart !== null && daysBetween(periodStart, today) >= PENALTY_SYSTEM.RESET_DAYS) {
+    periodStart = null;
+    points = 0;
+    minors = 0;
+    majors = 0;
+  }
+
   return {
-    eligible: true,
-    sourceBooking: matchedSourceBooking,
-    reason: 'Eligible for FCFS Claim transfer.',
+    points,
+    minors,
+    majors,
+    restrictedToday: restrictedDays.includes(today),
+    upcomingRestriction: restrictedDays.find((d) => d > today) ?? null,
+    restrictedDays,
+    periodStart,
+    resetsOn: periodStart ? addDays(periodStart, PENALTY_SYSTEM.RESET_DAYS) : null,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Boarding pass tokens                                                       */
+/* -------------------------------------------------------------------------- */
+
+const TOKEN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I
+
+function randomChars(length: number): string {
+  const bytes = new Uint8Array(length);
+  globalThis.crypto.getRandomValues(bytes);
+  let out = '';
+  for (const b of bytes) out += TOKEN_ALPHABET[b % TOKEN_ALPHABET.length];
+  return out;
+}
+
+/**
+ * Random single-use boarding token (60 bits). It contains no TP number, trip or seat,
+ * so it cannot be guessed from public information. Only this token is accepted by the scanner.
+ */
+export function generateQrToken(): string {
+  return `APB-${randomChars(4)}-${randomChars(4)}-${randomChars(4)}`;
+}
+
+/** Human-readable booking reference shown on the pass and to the driver. Not a credential. */
+export function generateBookingRef(): string {
+  return `BK-${randomChars(6)}`;
+}
+
+export function normalizeQrToken(input: string): string {
+  return input.trim().toUpperCase().replace(/\s+/g, '');
 }
 
 export function formatTime12h(time24: string): string {

@@ -117,7 +117,9 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
     const minsUntil = getMinutesUntilDeparture(currentTimeStr, trip.departureTime);
     const isTimePassed = minsUntil < 0;
     const full = isBusFull(trip);
-    const existingBooking = currentBookings.find((b) => b.tripId === trip.id);
+    const existingBooking = currentBookings.find(
+      (b) => b.tripId === trip.id && (b.status === 'RESERVED' || b.status === 'CHECKED_IN' || b.status === 'BOARDED')
+    );
     const bookedByCurrentUser = Boolean(existingBooking);
     const seatsLeft = (trip.seatedCapacity ?? trip.totalSeats ?? 40) - trip.bookedSeatIds.length;
     const isWaitlisted = waitlistTripIds.includes(trip.id);
@@ -240,7 +242,7 @@ export const ScheduleModal: React.FC<ScheduleModalProps> = ({
                     ? 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400'
                     : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
                 }`}
-                title="Seat alert on FCFS claim basis"
+                title="Seat Alert: be told when a seat is released. You can claim it only if you hold the schedule immediately after this one."
               >
                 {isWaitlisted ? (
                   <BellRing className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 animate-pulse" />

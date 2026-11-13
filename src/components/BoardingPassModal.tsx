@@ -1,6 +1,7 @@
 import React from 'react';
 import { Booking, DemoUser } from '../types/bus';
 import { formatTime12h } from '../utils/bookingRules';
+import { qrMatrix } from '../utils/qr';
 import { X, ShieldCheck, Bus, AlertTriangle, ArrowRightCircle, CheckCircle2, QrCode } from 'lucide-react';
 
 interface BoardingPassModalProps {
@@ -23,6 +24,23 @@ export const BoardingPassModal: React.FC<BoardingPassModalProps> = ({
   const isExpired = booking.status === 'EXPIRED';
   const isNoShow = booking.status === 'NO_SHOW';
 
+  // Real, scannable QR code of the random single-use token (no TP number inside the code).
+  let qrPath = '';
+  let qrSize = 0;
+  if (booking.qrCodeToken) {
+    try {
+      const matrix: boolean[][] = qrMatrix(booking.qrCodeToken);
+      qrSize = matrix.length + 8; // 4-module quiet zone on each side
+      matrix.forEach((row, y) =>
+        row.forEach((dark, x) => {
+          if (dark) qrPath += `M${x + 4} ${y + 4}h1v1h-1z`;
+        })
+      );
+    } catch {
+      qrPath = '';
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 animate-in fade-in duration-150">
       <div className="w-full max-w-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md p-4 shadow-xl relative overflow-hidden transition-colors">
@@ -42,7 +60,7 @@ export const BoardingPassModal: React.FC<BoardingPassModalProps> = ({
             {isBoarded && <CheckCircle2 className="w-3 h-3" />}
             <span>
               {isCheckedIn
-                ? 'GPS Verified · QR Pass Active'
+                ? 'Checked in · QR Pass Active'
                 : isReserved
                 ? 'Reserved · Check-in Required'
                 : isBoarded
@@ -74,6 +92,7 @@ export const BoardingPassModal: React.FC<BoardingPassModalProps> = ({
               </span>
               <h4 className="text-xs font-bold text-zinc-900 dark:text-white truncate">{user.name}</h4>
               <p className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400">{user.studentId}</p>
+              <p className="text-[9px] font-mono text-zinc-500">Booking ID: {booking.id}</p>
             </div>
             <div className="text-right">
               <span className="text-[8px] uppercase font-mono text-zinc-500 block">Seat</span>
@@ -116,7 +135,7 @@ export const BoardingPassModal: React.FC<BoardingPassModalProps> = ({
                 <QrCode className="w-5 h-5 text-zinc-400 mx-auto" />
                 <h5 className="text-[11px] font-bold text-zinc-900 dark:text-white">QR Unlocked After Check-in</h5>
                 <p className="text-[10px] text-zinc-500 leading-relaxed">
-                  Per Rule 9.1, digital QR boarding passes are issued upon completing GPS proximity check-in at the bus stop (T−30m to T−10m).
+                  The QR boarding pass is issued when you check in at the pickup point (from T−30 until before T−10).
                 </p>
               </div>
             ) : isTransferred ? (
@@ -137,41 +156,29 @@ export const BoardingPassModal: React.FC<BoardingPassModalProps> = ({
               /* Verified QR Code */
               <div>
                 <div className="w-32 h-32 bg-white p-2 rounded-sm mx-auto border border-zinc-300 dark:border-zinc-700 relative flex items-center justify-center">
-                  <svg className="w-full h-full" viewBox="0 0 100 100">
-                    <rect width="100" height="100" fill="white" />
-                    <rect x="5" y="5" width="25" height="25" fill="#09090B" rx="1" />
-                    <rect x="10" y="10" width="15" height="15" fill="white" />
-                    <rect x="13" y="13" width="9" height="9" fill="#09090B" />
-
-                    <rect x="70" y="5" width="25" height="25" fill="#09090B" rx="1" />
-                    <rect x="75" y="10" width="15" height="15" fill="white" />
-                    <rect x="78" y="13" width="9" height="9" fill="#09090B" />
-
-                    <rect x="5" y="70" width="25" height="25" fill="#09090B" rx="1" />
-                    <rect x="10" y="75" width="15" height="15" fill="white" />
-                    <rect x="13" y="78" width="9" height="9" fill="#09090B" />
-
-                    <rect x="35" y="10" width="6" height="6" fill="#09090B" />
-                    <rect x="45" y="15" width="6" height="6" fill="#09090B" />
-                    <rect x="55" y="10" width="6" height="6" fill="#09090B" />
-                    <rect x="35" y="25" width="12" height="6" fill="#09090B" />
-                    <rect x="10" y="40" width="6" height="10" fill="#09090B" />
-                    <rect x="25" y="45" width="8" height="6" fill="#09090B" />
-                    <rect x="40" y="40" width="20" height="20" fill="#10B981" rx="1" />
-                    <rect x="65" y="45" width="8" height="15" fill="#09090B" />
-                    <rect x="80" y="38" width="10" height="6" fill="#09090B" />
-                    <rect x="35" y="70" width="10" height="8" fill="#09090B" />
-                    <rect x="50" y="75" width="15" height="6" fill="#09090B" />
-                    <rect x="70" y="70" width="6" height="12" fill="#09090B" />
-                    <rect x="80" y="80" width="10" height="10" fill="#09090B" />
-                  </svg>
+                  {qrPath ? (
+                    <svg
+                      className="w-full h-full"
+                      viewBox={`0 0 ${qrSize} ${qrSize}`}
+                      shapeRendering="crispEdges"
+                      role="img"
+                      aria-label="Boarding pass QR code"
+                    >
+                      <rect width={qrSize} height={qrSize} fill="#ffffff" />
+                      <path d={qrPath} fill={isBoarded ? '#a1a1aa' : '#000000'} />
+                    </svg>
+                  ) : (
+                    <QrCode className="w-10 h-10 text-zinc-400" />
+                  )}
                 </div>
                 <div className="mt-2 space-y-0.5">
                   <p className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-bold truncate">
-                    TOKEN: {booking.qrCodeToken || `APU-${user.studentId}-${booking.tripId}-${booking.seatId}`}
+                    {booking.qrCodeToken || 'No pass issued'}
                   </p>
                   <p className="text-[9px] font-mono text-zinc-400">
-                    Single-use QR · Scan at bus entrance
+                    {isBoarded
+                      ? `Used at ${booking.boardedAt || 'boarding'}${booking.manualBoardingReason ? ' (manual boarding)' : ''} · cannot be scanned again`
+                      : 'Single-use QR · works once, on this shuttle only'}
                   </p>
                 </div>
               </div>
@@ -186,7 +193,7 @@ export const BoardingPassModal: React.FC<BoardingPassModalProps> = ({
               onClick={onBoardBus}
               className="w-full py-2 rounded-sm bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition shadow-2xs"
             >
-              <Bus className="w-3.5 h-3.5" /> Simulate Driver Scan & Board
+              <Bus className="w-3.5 h-3.5" /> Simulate door scan of this QR
             </button>
           )}
           {isBoarded && (

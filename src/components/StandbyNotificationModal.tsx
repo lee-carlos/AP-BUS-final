@@ -36,7 +36,7 @@ export const StandbyNotificationModal: React.FC<StandbyNotificationModalProps> =
           </span>
           <h3 className="text-sm font-extrabold text-zinc-900 dark:text-white">Seat Available on Earlier Bus!</h3>
           <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
-            A seat just opened on bus <strong className="text-zinc-900 dark:text-white">{trip.departureTime}</strong> due to T−10 check-in expiry. As a passenger on the next schedule, you can claim this earlier bus!
+            A seat was released on the <strong className="text-zinc-900 dark:text-white">{trip.departureTime}</strong> shuttle. You hold the schedule immediately after it, so you can claim this earlier shuttle. If the claim fails, your current booking stays valid.
           </p>
         </div>
 
@@ -76,7 +76,7 @@ export const StandbyNotificationModal: React.FC<StandbyNotificationModalProps> =
 
           <div className="flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-400 pt-1 border-t border-zinc-200 dark:border-zinc-800">
             <ShieldCheck className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span>GPS verified at pickup stop · Atomic transfer</span>
+            <span>Your location is checked at the pickup point when you claim</span>
           </div>
         </div>
 

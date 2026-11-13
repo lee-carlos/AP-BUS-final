@@ -95,9 +95,10 @@ export interface Booking {
   bookedAt: string;
   checkedInAt?: string;
   boardedAt?: string;
-  qrCodeToken?: string; // Only issued when status === 'CHECKED_IN' or 'BOARDED'
+  qrCodeToken?: string; // Random single-use token. Only issued at check-in (or a successful Claim).
   transferredToTripId?: string;
   notes?: string;
+  manualBoardingReason?: string; // Set when staff boarded the passenger without a QR scan
 }
 
 export type UserRole = 'Student' | 'Lecturer' | 'Staff' | 'Driver';
@@ -106,11 +107,13 @@ export interface PenaltyRecord {
   id: string;
   userId: string;
   tripId: string;
+  bookingId?: string;
   type: 'MINOR' | 'MAJOR';
   points: number; // Minor = 1, Major = 2
   reason: string;
-  timestamp: string;
-  waived: boolean;
+  day: string; // Service day of the violation, ISO date e.g. "2026-11-13"
+  timestamp: string; // HH:mm on that day
+  waived: boolean; // true when staff reversed the penalty
 }
 
 export interface DemoUser {
@@ -126,9 +129,13 @@ export interface DemoUser {
   description: string;
   minorPenalties: number;
   majorPenalties: number;
-  penaltyPoints: number; // minor*1 + major*2. Limit = 6 points (3 major equivalents)
+  penaltyPoints: number; // Points in the current 90-day period (minor*1 + major*2)
   penaltyStrikes: number; // legacy strike display
-  isRestricted: boolean;
+  isRestricted: boolean; // true only on the ONE service day the account is restricted
+  penaltyRecords?: PenaltyRecord[]; // Source of truth for the fields above
+  restrictedOn?: string | null; // ISO date of today's or the upcoming restricted service day
+  penaltyResetOn?: string | null; // ISO date the current 90-day period ends
+  scenario?: string; // Demo persona: the case this account demonstrates
   apCardNumber?: string;
   courseDepartment?: string;
   phone?: string;
@@ -150,4 +157,32 @@ export interface AuditLogEntry {
   actor: string;
   action: string;
   details: string;
+}
+
+
+// Scenario log: every rule decision (automatic, scripted or manual) is recorded here.
+export type ScenarioLogKind = 'success' | 'reject' | 'penalty' | 'info';
+
+export interface ScenarioLogEntry {
+  id: string;
+  day: string; // ISO date
+  time: string; // HH:mm
+  kind: ScenarioLogKind;
+  actor: string; // e.g. "Budi", "System", "Driver Rahman"
+  text: string;
+  caseTag?: string; // e.g. "Case 2 · Missed check-in"
+}
+
+// What the driver sees after a scan: the decision plus the passenger's identity.
+export interface ScanResult {
+  success: boolean;
+  message: string;
+  passenger?: {
+    name: string;
+    studentId: string;
+    bookingId: string;
+    seatId: string;
+    departureTime: string;
+    avatar?: string;
+  };
 }
