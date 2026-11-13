@@ -26,7 +26,7 @@ AP-BUS replaces the queue with one flow: **Book → Check in at the stop → Sca
 |------|------|
 | GitHub repo | https://github.com/lee-carlos/AP-BUS-final |
 | App | https://ap-bus-finale.vercel.app |
-| Demo video | _add link_ |
+| Demo video | https://youtu.be/28BSLtnguiY |
 | Pitch deck | _add link_ |
 
 ## Key features
