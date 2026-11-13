@@ -1,6 +1,6 @@
 /// <reference types="@types/google.maps" />
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { APIProvider, Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
+import { APIProvider, Map, AdvancedMarker, useMap, useApiLoadingStatus, APILoadingStatus } from '@vis.gl/react-google-maps';
 import { BusStop, BusTrip, Booking, DemoUser, LocationCoord } from '../types/bus';
 import { APU_STOPS, ROUTE_WAYPOINTS } from '../data/apuRoutes';
 import { interpolateAlongPolyline, isWithinBusStopRange } from '../utils/geo';
@@ -15,6 +15,16 @@ interface BusMapProps {
   trips: BusTrip[];
   currentTimeStr?: string;
   apiKey?: string;
+}
+
+function MapStatusWatcher({ onError }: { onError: () => void }) {
+  const status = useApiLoadingStatus();
+  useEffect(() => {
+    if (status === APILoadingStatus.FAILED || status === APILoadingStatus.AUTH_FAILURE) {
+      onError();
+    }
+  }, [status, onError]);
+  return null;
 }
 
 // Google Maps Route Polyline & 250m Radius Circle Manager
@@ -159,6 +169,12 @@ export const BusMap: React.FC<BusMapProps> = ({
   const [busProgress, setBusProgress] = useState(0.25);
   const [directionForward, setDirectionForward] = useState(true);
   const [mapError, setMapError] = useState(false);
+
+  useEffect(() => {
+    const onQuotaExceeded = () => setMapError(true);
+    window.addEventListener('gmp-quota-exceeded', onQuotaExceeded);
+    return () => window.removeEventListener('gmp-quota-exceeded', onQuotaExceeded);
+  }, []);
 
   // Active route stops
   const activeFrom = selectedFrom || (bookings.length > 0 ? APU_STOPS.find(s => s.name === bookings[0].fromStopName) || null : null);
@@ -385,7 +401,8 @@ export const BusMap: React.FC<BusMapProps> = ({
       {/* Main Map Rendering Area (Scrollable around all 14 points) */}
       <div className="w-full h-72 sm:h-84 relative">
         {mapsKey && !mapError ? (
-          <APIProvider apiKey={mapsKey} region="MY" language="en">
+          <APIProvider apiKey={mapsKey} libraries={['marker']} region="MY" language="en">
+            <MapStatusWatcher onError={() => setMapError(true)} />
             <Map
               defaultCenter={defaultCenter}
               defaultZoom={13}

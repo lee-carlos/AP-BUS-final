@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { APIProvider, Map, AdvancedMarker, useMap } from '@vis.gl/react-google-maps';
+import { APIProvider, Map, AdvancedMarker, useMap, useApiLoadingStatus, APILoadingStatus } from '@vis.gl/react-google-maps';
 import { BusTrip, BusStop, LocationCoord } from '../types/bus';
 import { APU_STOPS, ROUTE_WAYPOINTS } from '../data/apuRoutes';
 import { interpolateAlongPolyline } from '../utils/geo';
@@ -12,6 +12,16 @@ interface DriverRouteMapProps {
   apiKey?: string;
   vehicleProgress?: number;
   onVehicleProgressChange?: (progress: number) => void;
+}
+
+function DriverMapStatusWatcher({ onError }: { onError: () => void }) {
+  const status = useApiLoadingStatus();
+  useEffect(() => {
+    if (status === APILoadingStatus.FAILED || status === APILoadingStatus.AUTH_FAILURE) {
+      onError();
+    }
+  }, [status, onError]);
+  return null;
 }
 
 // Sub-component to manage Route Polyline and 250m Stop Geofence circles on Google Map
@@ -128,9 +138,19 @@ export const DriverRouteMap: React.FC<DriverRouteMapProps> = ({
   const mapsKey = apiKey || (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string) || '';
 
   // View Mode: 'google_maps' | 'vector_radar'
+  const [mapError, setMapError] = useState(false);
   const [viewMode, setViewMode] = useState<'google_maps' | 'vector_radar'>(
     mapsKey ? 'google_maps' : 'vector_radar'
   );
+
+  useEffect(() => {
+    const onQuotaExceeded = () => {
+      setMapError(true);
+      setViewMode('vector_radar');
+    };
+    window.addEventListener('gmp-quota-exceeded', onQuotaExceeded);
+    return () => window.removeEventListener('gmp-quota-exceeded', onQuotaExceeded);
+  }, []);
 
   // Vehicle progress simulation along the route (0% at origin, 100% at destination)
   const getInitialProgress = () => {
@@ -283,7 +303,7 @@ export const DriverRouteMap: React.FC<DriverRouteMapProps> = ({
 
         {/* View Toggle (Google Maps vs Transit Radar) */}
         <div className="flex items-center gap-1.5">
-          {mapsKey && (
+          {mapsKey && !mapError && (
             <div className="flex items-center rounded bg-zinc-200 dark:bg-zinc-800 p-0.5 text-[9px] font-bold">
               <button
                 onClick={() => setViewMode('google_maps')}
@@ -319,11 +339,17 @@ export const DriverRouteMap: React.FC<DriverRouteMapProps> = ({
 
       {/* Main Map Viewport */}
       <div className="relative w-full h-64 bg-slate-900 overflow-hidden select-none">
-        {mapsKey && viewMode === 'google_maps' ? (
+        {mapsKey && !mapError && viewMode === 'google_maps' ? (
           /* ============================================================= */
           /* GOOGLE MAPS PLATFORM INTEGRATION FOR DRIVER ACCOUNT           */
           /* ============================================================= */
-          <APIProvider apiKey={mapsKey} region="MY" language="en">
+          <APIProvider apiKey={mapsKey} libraries={['marker']} region="MY" language="en">
+            <DriverMapStatusWatcher
+              onError={() => {
+                setMapError(true);
+                setViewMode('vector_radar');
+              }}
+            />
             <Map
               defaultCenter={defaultCenter}
               defaultZoom={14}
